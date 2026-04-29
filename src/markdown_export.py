@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from models import MarkdownDocument, MessageRole, Session
 
@@ -46,6 +47,20 @@ def build_markdown_document(session: Session) -> MarkdownDocument:
     )
 
 
+def export_markdown_documents(sessions: list[Session], output_directory: Path) -> list[Path]:
+    """Export multiple sessions as Markdown files into one directory."""
+    written_paths: list[Path] = []
+    used_names: set[str] = set()
+
+    for session in sessions:
+        document = build_markdown_document(session)
+        output_path = _build_unique_output_path(output_directory, document.suggested_filename, used_names)
+        output_path.write_text(document.body, encoding='utf-8')
+        written_paths.append(output_path)
+
+    return written_paths
+
+
 def _select_export_timestamp(session: Session) -> datetime | None:
     for value in (session.started_at, session.oldest_timestamp, session.latest_timestamp, session.ended_at):
         if isinstance(value, datetime):
@@ -64,4 +79,19 @@ def _sanitize_filename_component(value: str) -> str:
     return normalized[:80] or 'session'
 
 
-__all__ = ['build_markdown_document']
+def _build_unique_output_path(output_directory: Path, filename: str, used_names: set[str]) -> Path:
+    candidate = Path(filename)
+    stem = candidate.stem
+    suffix = candidate.suffix or '.md'
+    index = 1
+    resolved_name = candidate.name
+
+    while resolved_name.casefold() in used_names or (output_directory / resolved_name).exists():
+        index += 1
+        resolved_name = f'{stem}_{index}{suffix}'
+
+    used_names.add(resolved_name.casefold())
+    return output_directory / resolved_name
+
+
+__all__ = ['build_markdown_document', 'export_markdown_documents']
