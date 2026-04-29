@@ -7,6 +7,7 @@ import tkinter as tk
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
+from urllib.parse import unquote, urlparse
 
 from markdown_export import build_markdown_document, export_markdown_documents
 from models import Message, MessageRole, Session, SessionListItem
@@ -51,17 +52,53 @@ def extract_workspace_storage_id(source_path: Path | None) -> str | None:
     return None
 
 
+def resolve_workspace_reference_path(source_path: Path | None) -> Path | None:
+    """Resolve a workspace path from the workspace.json colocated with the transcript."""
+    workspace_storage_id = extract_workspace_storage_id(source_path)
+    if source_path is None or workspace_storage_id is None:
+        return None
+
+    workspace_json_path = source_path.parents[2] / 'workspace.json'
+    if not workspace_json_path.exists():
+        return None
+
+    try:
+        payload = workspace_json_path.read_text(encoding='utf-8')
+    except OSError:
+        return None
+
+    try:
+        import json
+
+        data = json.loads(payload)
+    except json.JSONDecodeError:
+        return None
+
+    workspace_uri = data.get('workspace')
+    if not isinstance(workspace_uri, str) or not workspace_uri:
+        return None
+
+    parsed = urlparse(workspace_uri)
+    if parsed.scheme != 'file' or not parsed.path:
+        return None
+
+    decoded_path = unquote(parsed.path)
+    if decoded_path.startswith('/') and len(decoded_path) >= 3 and decoded_path[2] == ':':
+        decoded_path = decoded_path[1:]
+    return Path(decoded_path)
+
+
 def build_session_reference_text(session: Session | None) -> str:
     """Build the user-facing reference text for the selected session."""
     if session is None:
-        return '参照情報: セッション未選択'
+        return 'セッション未選択'
     if session.source_path is None:
-        return '参照情報: 元ファイル情報なし'
+        return '元ファイル情報なし'
 
-    workspace_storage_id = extract_workspace_storage_id(session.source_path)
-    if workspace_storage_id is None:
-        return f'参照情報: {session.source_path}'
-    return f'参照情報: workspaceStorage={workspace_storage_id} | {session.source_path}'
+    workspace_reference_path = resolve_workspace_reference_path(session.source_path)
+    if workspace_reference_path is not None:
+        return str(workspace_reference_path)
+    return str(session.source_path)
 
 
 def format_latest_timestamp(value: object) -> str:
@@ -366,14 +403,32 @@ class ChatLogViewerApp:
         )
         restoration_notice_label.pack(fill=tk.X, pady=(0, 8))
 
-        reference_label = ttk.Label(
-            detail_frame,
+        reference_frame = ttk.Frame(detail_frame)
+        reference_frame.pack(fill=tk.X, pady=(0, 8))
+
+        reference_title_label = ttk.Label(
+            reference_frame,
+            text='参照パス',
+            justify=tk.LEFT,
+            anchor=tk.W,
+        )
+        reference_title_label.pack(fill=tk.X)
+
+        self.reference_entry = ttk.Entry(
+            reference_frame,
             textvariable=self.reference_var,
+            state='readonly',
+        )
+        self.reference_entry.pack(fill=tk.X, pady=(4, 0))
+
+        reference_hint_label = ttk.Label(
+            detail_frame,
+            text='この文字列を選択してコピーし、対象のワークスペースやフォルダを開けます。',
             justify=tk.LEFT,
             anchor=tk.W,
             wraplength=700,
         )
-        reference_label.pack(fill=tk.X, pady=(0, 8))
+        reference_hint_label.pack(fill=tk.X, pady=(0, 8))
 
         text_frame = ttk.Frame(detail_frame)
         text_frame.pack(fill=tk.BOTH, expand=True)
@@ -554,5 +609,6 @@ __all__ = [
     'format_message_timestamp',
     'format_warning_flag',
     'open_path_in_shell',
+    'resolve_workspace_reference_path',
     'sort_session_list_items',
 ]
