@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import os
 import tkinter as tk
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from tkinter import ttk
+from tkinter import filedialog, messagebox, ttk
 
+from markdown_export import build_markdown_document, export_markdown_documents
 from models import Message, MessageRole, Session, SessionListItem
 from scanner import collect_scan_issues, scan_sessions, summarize_scan
 from session_list import build_session_list_items
@@ -61,6 +63,11 @@ def build_message_heading(message: Message) -> str:
     return f'[{role_label}] {timestamp}'
 
 
+def open_path_in_shell(path: Path) -> None:
+    """Open a local file with the OS default handler."""
+    os.startfile(path)  # type: ignore[attr-defined]
+
+
 def resolve_sort_by(value: str) -> str:
     """Resolve the selected sort-by label into its internal key."""
     return SORT_BY_LABEL_TO_KEY.get(value, value)
@@ -113,6 +120,8 @@ class ChatLogViewerApp:
         self.detail_var = tk.StringVar(value='No session selected.')
         self.sort_by_var = tk.StringVar(value='最終更新')
         self.sort_order_var = tk.StringVar(value='降順')
+        self._selected_session_id: str | None = None
+        self._selected_session_ids: list[str] = []
 
         self._build_layout()
 
@@ -190,7 +199,7 @@ class ChatLogViewerApp:
         sort_order_box.bind('<<ComboboxSelected>>', self._handle_sort_changed)
 
         columns = ('messages', 'latest', 'warnings')
-        self.session_tree = ttk.Treeview(parent, columns=columns, show='tree headings', selectmode='browse')
+        self.session_tree = ttk.Treeview(parent, columns=columns, show='tree headings', selectmode='extended')
         self.session_tree.heading('#0', text='タイトル', command=lambda: self._handle_heading_sort('title'))
         self.session_tree.heading('messages', text='メッセージ数', command=lambda: self._handle_heading_sort('message_count'))
         self.session_tree.heading('latest', text='最終更新', command=lambda: self._handle_heading_sort('latest'))
@@ -204,10 +213,12 @@ class ChatLogViewerApp:
 
     def _refresh_session_tree(self) -> None:
         """Rebuild the session tree using the selected sort settings."""
-        selected_session_id: str | None = None
+        selected_session_ids: set[str] = set()
         current_selection = self.session_tree.selection()
-        if current_selection:
-            selected_session_id = self._tree_item_to_session.get(current_selection[0], ('', '', 0, '', False))[0] or None
+        for item_id in current_selection:
+            session_id = self._tree_item_to_session.get(item_id, ('', '', 0, '', False))[0]
+            if session_id:
+                selected_session_ids.add(session_id)
 
         sorted_items = sort_session_list_items(
             self._session_list_items,
@@ -218,7 +229,7 @@ class ChatLogViewerApp:
         self.session_tree.delete(*self.session_tree.get_children())
         self._tree_item_to_session.clear()
 
-        selected_row_id: str | None = None
+        selected_row_ids: list[str] = []
         for item in sorted_items:
             tree_item_id = self.session_tree.insert(
                 '',
@@ -237,15 +248,15 @@ class ChatLogViewerApp:
                 format_latest_timestamp(item.latest_timestamp),
                 item.has_warnings,
             )
-            if item.session_id == selected_session_id:
-                selected_row_id = tree_item_id
+            if item.session_id in selected_session_ids:
+                selected_row_ids.append(tree_item_id)
 
-        if selected_row_id is None and self.session_tree.get_children():
-            selected_row_id = self.session_tree.get_children()[0]
+        if not selected_row_ids and self.session_tree.get_children():
+            selected_row_ids = [self.session_tree.get_children()[0]]
 
-        if selected_row_id is not None:
-            self.session_tree.selection_set(selected_row_id)
-            self.session_tree.focus(selected_row_id)
+        if selected_row_ids:
+            self.session_tree.selection_set(selected_row_ids)
+            self.session_tree.focus(selected_row_ids[0])
 
     def _handle_sort_changed(self, _event: object) -> None:
         """Apply the selected sort settings to the session tree."""
@@ -282,8 +293,27 @@ class ChatLogViewerApp:
 
     def _build_detail_panel(self, parent: ttk.Frame) -> None:
         """Create the right placeholder pane."""
-        title_label = ttk.Label(parent, text='Details')
-        title_label.pack(anchor=tk.W, pady=(0, 8))
+        header_frame = ttk.Frame(parent)
+        header_frame.pack(fill=tk.X, pady=(0, 8))
+
+        title_label = ttk.Label(header_frame, text='Details')
+        title_label.pack(side=tk.LEFT)
+
+        self.export_button = ttk.Button(
+            header_frame,
+            text='Markdown 保存',
+            command=self._export_selected_session,
+            state='disabled',
+        )
+        self.export_button.pack(side=tk.RIGHT)
+
+        self.open_source_button = ttk.Button(
+            header_frame,
+            text='元ファイルを開く',
+            command=self._open_selected_session_source,
+            state='disabled',
+        )
+        self.open_source_button.pack(side=tk.RIGHT, padx=(0, 8))
 
         detail_frame = ttk.Frame(parent, relief=tk.GROOVE, padding=12)
         detail_frame.pack(fill=tk.BOTH, expand=True)
@@ -309,18 +339,125 @@ class ChatLogViewerApp:
         """Update the placeholder detail pane from the selected list item."""
         selection = self.session_tree.selection()
         if not selection:
+            self._selected_session_id = None
+            self._selected_session_ids = []
+            self.export_button.configure(state='disabled')
+            self.open_source_button.configure(state='disabled')
             self.detail_var.set('No session selected.')
             self._set_detail_text('No session selected.')
             return
 
+        selected_session_ids = [self._tree_item_to_session[item_id][0] for item_id in selection if item_id in self._tree_item_to_session]
+        self._selected_session_ids = selected_session_ids
+
         session_id, title, message_count, latest, has_warnings = self._tree_item_to_session[selection[0]]
         warning_text = 'Yes' if has_warnings else 'No'
         session = self._sessions_by_id.get(session_id)
+        self._selected_session_id = session_id
+        selected_sessions = self._get_selected_sessions()
+        self.export_button.configure(state='normal' if selected_sessions else 'disabled')
+        has_source_path = len(selected_sessions) == 1 and session is not None and session.source_path is not None
+        self.open_source_button.configure(state='normal' if has_source_path else 'disabled')
+
+        if len(selected_sessions) > 1:
+            total_messages = sum(selected.message_count for selected in selected_sessions)
+            self.detail_var.set(f'{len(selected_sessions)} sessions selected | Messages: {total_messages}')
+            self._set_detail_text('複数セッションを選択中です。先頭1件の詳細表示は行わず、Markdown 保存で選択中セッションをまとめて出力できます。')
+            return
+
         self.detail_var.set(f'{title} | Messages: {message_count} | Latest: {latest} | Warnings: {warning_text}')
         if session is None:
             self._set_detail_text('The selected session could not be loaded.')
             return
         self._render_session_messages(session)
+
+    def _export_selected_session(self) -> None:
+        """Export the currently selected sessions to Markdown file(s)."""
+        sessions = self._get_selected_sessions()
+        if not sessions:
+            messagebox.showinfo('Markdown Export', 'No session is selected.')
+            self.status_var.set('Markdown export skipped: no session selected.')
+            return
+
+        if len(sessions) > 1:
+            self._export_multiple_sessions(sessions)
+            return
+
+        session = sessions[0]
+
+        document = build_markdown_document(session)
+        selected_path = filedialog.asksaveasfilename(
+            title='Markdown エクスポート',
+            defaultextension='.md',
+            filetypes=[('Markdown files', '*.md'), ('All files', '*.*')],
+            initialfile=document.suggested_filename,
+        )
+        if not selected_path:
+            self.status_var.set('Markdown export cancelled.')
+            return
+
+        output_path = Path(selected_path)
+        try:
+            output_path.write_text(document.body, encoding='utf-8')
+        except OSError as error:
+            messagebox.showerror('Markdown Export', f'Failed to export Markdown: {error}')
+            self.status_var.set(f'Markdown export failed: {output_path}')
+            return
+
+        self.status_var.set(f'Markdown exported: {output_path}')
+
+    def _get_selected_session(self) -> Session | None:
+        """Return the currently selected session, if available."""
+        if self._selected_session_id is None:
+            return None
+        return self._sessions_by_id.get(self._selected_session_id)
+
+    def _get_selected_sessions(self) -> list[Session]:
+        """Return all currently selected sessions in UI order."""
+        if not self._selected_session_ids and self._selected_session_id is not None:
+            session = self._sessions_by_id.get(self._selected_session_id)
+            return [session] if session is not None else []
+
+        sessions: list[Session] = []
+        for session_id in self._selected_session_ids:
+            session = self._sessions_by_id.get(session_id)
+            if session is not None:
+                sessions.append(session)
+        return sessions
+
+    def _export_multiple_sessions(self, sessions: list[Session]) -> None:
+        """Export multiple selected sessions into one output directory."""
+        selected_directory = filedialog.askdirectory(title='Markdown エクスポート先フォルダを選択')
+        if not selected_directory:
+            self.status_var.set('Markdown export cancelled.')
+            return
+
+        output_directory = Path(selected_directory)
+        try:
+            written_paths = export_markdown_documents(sessions, output_directory)
+        except OSError as error:
+            messagebox.showerror('Markdown Export', f'Failed to export Markdown: {error}')
+            self.status_var.set(f'Markdown export failed: {output_directory}')
+            return
+
+        self.status_var.set(f'Markdown exported: {len(written_paths)} files to {output_directory}')
+
+    def _open_selected_session_source(self) -> None:
+        """Open the source transcript file for the currently selected session."""
+        session = self._get_selected_session()
+        if session is None or session.source_path is None:
+            messagebox.showinfo('Open Source File', 'No source file is available for the selected session.')
+            self.status_var.set('Open source file skipped: no source path available.')
+            return
+
+        try:
+            open_path_in_shell(session.source_path)
+        except OSError as error:
+            messagebox.showerror('Open Source File', f'Failed to open source file: {error}')
+            self.status_var.set(f'Open source file failed: {session.source_path}')
+            return
+
+        self.status_var.set(f'Opened source file: {session.source_path}')
 
     def _render_session_messages(self, session: Session) -> None:
         """Render actual session messages in the detail text pane."""
@@ -355,5 +492,6 @@ __all__ = [
     'format_latest_timestamp',
     'format_message_timestamp',
     'format_warning_flag',
+    'open_path_in_shell',
     'sort_session_list_items',
 ]

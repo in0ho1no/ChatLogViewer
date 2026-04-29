@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import tkinter as tk
 from datetime import UTC, datetime
+from pathlib import Path
 
-from models import Message, MessageRole, SessionListItem
+import pytest
+
+from models import Message, MessageRole, Session, SessionListItem, SessionSourceKind
 from ui import (
     ChatLogViewerApp,
     build_message_heading,
@@ -16,6 +19,26 @@ from ui import (
     resolve_sort_order,
     sort_session_list_items,
 )
+
+
+class _FakeStringVar:
+    def __init__(self, value: str = '') -> None:
+        self._value = value
+
+    def get(self) -> str:
+        return self._value
+
+    def set(self, value: str) -> None:
+        self._value = value
+
+
+def _build_export_test_app() -> ChatLogViewerApp:
+    app = ChatLogViewerApp.__new__(ChatLogViewerApp)
+    app.status_var = _FakeStringVar('Ready')
+    app._sessions_by_id = {}
+    app._selected_session_id = None
+    app._selected_session_ids = []
+    return app
 
 
 def test_format_latest_timestamp_handles_none() -> None:
@@ -197,3 +220,97 @@ def test_heading_sort_updates_sort_state() -> None:
 
     assert app.sort_order_var.get() == '降順'
     root.destroy()
+
+
+def test_export_selected_session_writes_markdown_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Export should write the selected session to the chosen Markdown path."""
+    app = _build_export_test_app()
+
+    session = Session(
+        session_id='session-1',
+        title='Session Title',
+        source_kind=SessionSourceKind.TRANSCRIPT,
+        messages=[
+            Message(
+                message_id='message-1',
+                role=MessageRole.USER,
+                content='Hello export',
+                timestamp=datetime(2026, 4, 30, 0, 0, 0, tzinfo=UTC),
+            )
+        ],
+        started_at=datetime(2026, 4, 30, 0, 0, 0, tzinfo=UTC),
+        oldest_timestamp=datetime(2026, 4, 30, 0, 0, 0, tzinfo=UTC),
+        latest_timestamp=datetime(2026, 4, 30, 0, 0, 0, tzinfo=UTC),
+    )
+    app._sessions_by_id = {session.session_id: session}
+    app._selected_session_id = session.session_id
+
+    output_path = tmp_path / 'session.md'
+    monkeypatch.setattr('ui.filedialog.asksaveasfilename', lambda **_: str(output_path))
+
+    shown_errors: list[str] = []
+    monkeypatch.setattr('ui.messagebox.showerror', lambda _title, message: shown_errors.append(message))
+
+    app._export_selected_session()
+
+    assert shown_errors == []
+    assert output_path.exists()
+    assert 'Hello export' in output_path.read_text(encoding='utf-8')
+    assert app.status_var.get() == f'Markdown exported: {output_path}'
+
+
+def test_open_selected_session_source_opens_transcript_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Open source should launch the selected session's transcript file."""
+    app = _build_export_test_app()
+
+    source_path = tmp_path / 'session-1.jsonl'
+    source_path.write_text('test', encoding='utf-8')
+    session = Session(
+        session_id='session-1',
+        title='Session Title',
+        source_kind=SessionSourceKind.TRANSCRIPT,
+        source_path=source_path,
+    )
+    app._sessions_by_id = {session.session_id: session}
+    app._selected_session_id = session.session_id
+
+    opened_paths: list[Path] = []
+    monkeypatch.setattr('ui.open_path_in_shell', lambda path: opened_paths.append(path))
+
+    app._open_selected_session_source()
+
+    assert opened_paths == [source_path]
+    assert app.status_var.get() == f'Opened source file: {source_path}'
+
+
+def test_export_selected_session_writes_multiple_markdown_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Multiple selected sessions should export into the chosen directory."""
+    app = _build_export_test_app()
+
+    first = Session(
+        session_id='session-1',
+        title='First Session',
+        source_kind=SessionSourceKind.TRANSCRIPT,
+        started_at=datetime(2026, 4, 30, 0, 0, 0, tzinfo=UTC),
+    )
+    second = Session(
+        session_id='session-2',
+        title='Second Session',
+        source_kind=SessionSourceKind.TRANSCRIPT,
+        started_at=datetime(2026, 4, 30, 1, 0, 0, tzinfo=UTC),
+    )
+    app._sessions_by_id = {first.session_id: first, second.session_id: second}
+    app._selected_session_ids = [first.session_id, second.session_id]
+    app._selected_session_id = first.session_id
+
+    monkeypatch.setattr('ui.filedialog.askdirectory', lambda **_: str(tmp_path))
+
+    shown_errors: list[str] = []
+    monkeypatch.setattr('ui.messagebox.showerror', lambda _title, message: shown_errors.append(message))
+
+    app._export_selected_session()
+
+    assert shown_errors == []
+    assert (tmp_path / '20260430_090000_First Session.md').exists()
+    assert (tmp_path / '20260430_100000_Second Session.md').exists()
+    assert app.status_var.get() == f'Markdown exported: 2 files to {tmp_path}'

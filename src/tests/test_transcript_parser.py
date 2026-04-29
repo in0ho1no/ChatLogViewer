@@ -57,6 +57,7 @@ def test_build_session_from_transcript_only_materializes_user_and_assistant_mess
     session = parse_transcript_session(transcript_path)
 
     assert session.title == 'first question'
+    assert session.source_path == transcript_path
     assert [message.role for message in session.messages] == [
         MessageRole.USER,
         MessageRole.ASSISTANT,
