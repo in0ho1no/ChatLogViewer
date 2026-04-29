@@ -156,6 +156,7 @@ def build_session_from_transcript(transcript: TranscriptFile) -> Session:
         session_id=transcript.session_id,
         title=title,
         source_kind=SessionSourceKind.TRANSCRIPT,
+        source_path=transcript.file_path,
         messages=messages,
         issues=list(transcript.issues),
         started_at=started_at or oldest_timestamp,

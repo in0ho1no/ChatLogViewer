@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import tkinter as tk
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -60,6 +61,11 @@ def build_message_heading(message: Message) -> str:
     role_label = 'USER' if message.role is MessageRole.USER else 'AI'
     timestamp = format_message_timestamp(message.timestamp)
     return f'[{role_label}] {timestamp}'
+
+
+def open_path_in_shell(path: Path) -> None:
+    """Open a local file with the OS default handler."""
+    os.startfile(path)  # type: ignore[attr-defined]
 
 
 def resolve_sort_by(value: str) -> str:
@@ -298,6 +304,14 @@ class ChatLogViewerApp:
         )
         self.export_button.pack(side=tk.RIGHT)
 
+        self.open_source_button = ttk.Button(
+            header_frame,
+            text='元ファイルを開く',
+            command=self._open_selected_session_source,
+            state='disabled',
+        )
+        self.open_source_button.pack(side=tk.RIGHT, padx=(0, 8))
+
         detail_frame = ttk.Frame(parent, relief=tk.GROOVE, padding=12)
         detail_frame.pack(fill=tk.BOTH, expand=True)
 
@@ -324,6 +338,7 @@ class ChatLogViewerApp:
         if not selection:
             self._selected_session_id = None
             self.export_button.configure(state='disabled')
+            self.open_source_button.configure(state='disabled')
             self.detail_var.set('No session selected.')
             self._set_detail_text('No session selected.')
             return
@@ -333,6 +348,8 @@ class ChatLogViewerApp:
         session = self._sessions_by_id.get(session_id)
         self._selected_session_id = session_id
         self.export_button.configure(state='normal' if session is not None else 'disabled')
+        has_source_path = session is not None and session.source_path is not None
+        self.open_source_button.configure(state='normal' if has_source_path else 'disabled')
         self.detail_var.set(f'{title} | Messages: {message_count} | Latest: {latest} | Warnings: {warning_text}')
         if session is None:
             self._set_detail_text('The selected session could not be loaded.')
@@ -374,6 +391,23 @@ class ChatLogViewerApp:
             return None
         return self._sessions_by_id.get(self._selected_session_id)
 
+    def _open_selected_session_source(self) -> None:
+        """Open the source transcript file for the currently selected session."""
+        session = self._get_selected_session()
+        if session is None or session.source_path is None:
+            messagebox.showinfo('Open Source File', 'No source file is available for the selected session.')
+            self.status_var.set('Open source file skipped: no source path available.')
+            return
+
+        try:
+            open_path_in_shell(session.source_path)
+        except OSError as error:
+            messagebox.showerror('Open Source File', f'Failed to open source file: {error}')
+            self.status_var.set(f'Open source file failed: {session.source_path}')
+            return
+
+        self.status_var.set(f'Opened source file: {session.source_path}')
+
     def _render_session_messages(self, session: Session) -> None:
         """Render actual session messages in the detail text pane."""
         self.detail_text.configure(state='normal')
@@ -407,5 +441,6 @@ __all__ = [
     'format_latest_timestamp',
     'format_message_timestamp',
     'format_warning_flag',
+    'open_path_in_shell',
     'sort_session_list_items',
 ]

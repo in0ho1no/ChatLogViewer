@@ -240,3 +240,30 @@ def test_export_selected_session_writes_markdown_file(tmp_path: Path, monkeypatc
     assert 'Hello export' in output_path.read_text(encoding='utf-8')
     assert app.status_var.get() == f'Markdown exported: {output_path}'
     root.destroy()
+
+
+def test_open_selected_session_source_opens_transcript_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Open source should launch the selected session's transcript file."""
+    root = tk.Tk()
+    root.withdraw()
+    app = ChatLogViewerApp(root)
+
+    source_path = tmp_path / 'session-1.jsonl'
+    source_path.write_text('test', encoding='utf-8')
+    session = Session(
+        session_id='session-1',
+        title='Session Title',
+        source_kind=SessionSourceKind.TRANSCRIPT,
+        source_path=source_path,
+    )
+    app._sessions_by_id = {session.session_id: session}
+    app._selected_session_id = session.session_id
+
+    opened_paths: list[Path] = []
+    monkeypatch.setattr('ui.open_path_in_shell', lambda path: opened_paths.append(path))
+
+    app._open_selected_session_source()
+
+    assert opened_paths == [source_path]
+    assert app.status_var.get() == f'Opened source file: {source_path}'
+    root.destroy()

@@ -179,6 +179,7 @@ class Session:
     session_id: str
     title: str
     source_kind: SessionSourceKind
+    source_path: Path | None = None
     messages: list[Message] = field(default_factory=list)
     metadata: SessionMetadata = field(default_factory=SessionMetadata)
     issues: list[ParseIssue] = field(default_factory=list)
