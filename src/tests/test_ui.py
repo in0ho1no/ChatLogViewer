@@ -12,11 +12,15 @@ from models import Message, MessageRole, Session, SessionListItem, SessionSource
 from ui import (
     ChatLogViewerApp,
     build_message_heading,
+    build_restoration_notice,
+    build_session_reference_text,
+    extract_workspace_storage_id,
     format_latest_timestamp,
     format_message_timestamp,
     format_warning_flag,
     resolve_sort_by,
     resolve_sort_order,
+    resolve_workspace_reference_path,
     sort_session_list_items,
 )
 
@@ -74,6 +78,66 @@ def test_build_message_heading_includes_role_and_timestamp() -> None:
     )
 
     assert build_message_heading(message) == '[USER] 2026-04-30T09:30:00+00:00'
+
+
+def test_build_restoration_notice_mentions_incomplete_restoration() -> None:
+    """The persistent notice should explain that transcript restoration is not complete."""
+    notice = build_restoration_notice()
+
+    assert 'transcript JSONL' in notice
+    assert '完全一致しない' in notice
+
+
+def test_extract_workspace_storage_id_reads_hash_from_transcript_path() -> None:
+    """The workspaceStorage hash should be derived from the source path."""
+    source_path = Path(
+        r'C:\Users\seigy\AppData\Roaming\Code\User\workspaceStorage\2b31b85a7f8fe44be7892e126fad3555\GitHub.copilot-chat\transcripts\session-1.jsonl'
+    )
+
+    assert extract_workspace_storage_id(source_path) == '2b31b85a7f8fe44be7892e126fad3555'
+
+
+def test_resolve_workspace_reference_path_reads_workspace_json(tmp_path: Path) -> None:
+    """workspace.json should be used to resolve the human-meaningful workspace path."""
+    workspace_root = tmp_path / 'workspaceStorage' / '2b31b85a7f8fe44be7892e126fad3555'
+    transcript_dir = workspace_root / 'GitHub.copilot-chat' / 'transcripts'
+    transcript_dir.mkdir(parents=True)
+    source_path = transcript_dir / 'session-1.jsonl'
+    source_path.write_text('', encoding='utf-8')
+    workspace_json_path = workspace_root / 'workspace.json'
+    workspace_json_path.write_text(
+        '{"workspace": "file:///d%3A/work/Py/40ChatLogViewer/ChatLogViewer/ChatLogViewer.code-workspace"}',
+        encoding='utf-8',
+    )
+
+    resolved_path = resolve_workspace_reference_path(source_path)
+
+    assert resolved_path == Path(r'd:\work\Py\40ChatLogViewer\ChatLogViewer\ChatLogViewer.code-workspace')
+
+
+def test_build_session_reference_text_prefers_workspace_path_from_workspace_json(tmp_path: Path) -> None:
+    """Reference text should prefer the resolved workspace path over the raw transcript path."""
+    workspace_root = tmp_path / 'workspaceStorage' / '2b31b85a7f8fe44be7892e126fad3555'
+    transcript_dir = workspace_root / 'GitHub.copilot-chat' / 'transcripts'
+    transcript_dir.mkdir(parents=True)
+    source_path = transcript_dir / 'session-1.jsonl'
+    source_path.write_text('', encoding='utf-8')
+    workspace_json_path = workspace_root / 'workspace.json'
+    workspace_json_path.write_text(
+        '{"workspace": "file:///d%3A/work/Py/40ChatLogViewer/ChatLogViewer/ChatLogViewer.code-workspace"}',
+        encoding='utf-8',
+    )
+
+    session = Session(
+        session_id='session-1',
+        title='Session Title',
+        source_kind=SessionSourceKind.TRANSCRIPT,
+        source_path=source_path,
+    )
+
+    reference = build_session_reference_text(session)
+
+    assert reference == r'd:\work\Py\40ChatLogViewer\ChatLogViewer\ChatLogViewer.code-workspace'
 
 
 def test_resolve_sort_by_supports_japanese_labels() -> None:
