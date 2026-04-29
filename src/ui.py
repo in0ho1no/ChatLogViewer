@@ -11,6 +11,19 @@ from models import Message, MessageRole, Session, SessionListItem
 from scanner import collect_scan_issues, scan_sessions, summarize_scan
 from session_list import build_session_list_items
 
+SORT_BY_OPTIONS: tuple[tuple[str, str], ...] = (
+    ('最終更新', 'latest'),
+    ('開始時刻', 'oldest'),
+)
+
+SORT_ORDER_OPTIONS: tuple[tuple[str, str], ...] = (
+    ('降順', 'desc'),
+    ('昇順', 'asc'),
+)
+
+SORT_BY_LABEL_TO_KEY = dict(SORT_BY_OPTIONS)
+SORT_ORDER_LABEL_TO_KEY = dict(SORT_ORDER_OPTIONS)
+
 
 def format_latest_timestamp(value: object) -> str:
     """Format the latest timestamp for the session list."""
@@ -42,6 +55,16 @@ def build_message_heading(message: Message) -> str:
     role_label = 'USER' if message.role is MessageRole.USER else 'AI'
     timestamp = format_message_timestamp(message.timestamp)
     return f'[{role_label}] {timestamp}'
+
+
+def resolve_sort_by(value: str) -> str:
+    """Resolve the selected sort-by label into its internal key."""
+    return SORT_BY_LABEL_TO_KEY.get(value, value)
+
+
+def resolve_sort_order(value: str) -> str:
+    """Resolve the selected sort-order label into its internal key."""
+    return SORT_ORDER_LABEL_TO_KEY.get(value, value)
 
 
 def sort_session_list_items(
@@ -78,8 +101,8 @@ class ChatLogViewerApp:
 
         self.status_var = tk.StringVar(value='Ready')
         self.detail_var = tk.StringVar(value='No session selected.')
-        self.sort_by_var = tk.StringVar(value='latest')
-        self.sort_order_var = tk.StringVar(value='desc')
+        self.sort_by_var = tk.StringVar(value='最終更新')
+        self.sort_order_var = tk.StringVar(value='降順')
 
         self._build_layout()
 
@@ -134,22 +157,22 @@ class ChatLogViewerApp:
         controls = ttk.Frame(parent)
         controls.pack(fill=tk.X, pady=(0, 8))
 
-        ttk.Label(controls, text='Sort by').pack(side=tk.LEFT)
+        ttk.Label(controls, text='並び替え').pack(side=tk.LEFT)
         sort_by_box = ttk.Combobox(
             controls,
             textvariable=self.sort_by_var,
-            values=('latest', 'oldest'),
+            values=tuple(label for label, _ in SORT_BY_OPTIONS),
             state='readonly',
             width=10,
         )
         sort_by_box.pack(side=tk.LEFT, padx=(6, 12))
         sort_by_box.bind('<<ComboboxSelected>>', self._handle_sort_changed)
 
-        ttk.Label(controls, text='Order').pack(side=tk.LEFT)
+        ttk.Label(controls, text='順序').pack(side=tk.LEFT)
         sort_order_box = ttk.Combobox(
             controls,
             textvariable=self.sort_order_var,
-            values=('desc', 'asc'),
+            values=tuple(label for label, _ in SORT_ORDER_OPTIONS),
             state='readonly',
             width=8,
         )
@@ -178,8 +201,8 @@ class ChatLogViewerApp:
 
         sorted_items = sort_session_list_items(
             self._session_list_items,
-            sort_by=self.sort_by_var.get(),
-            sort_order=self.sort_order_var.get(),
+            sort_by=resolve_sort_by(self.sort_by_var.get()),
+            sort_order=resolve_sort_order(self.sort_order_var.get()),
         )
 
         self.session_tree.delete(*self.session_tree.get_children())

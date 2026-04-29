@@ -5,7 +5,15 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from models import Message, MessageRole, SessionListItem
-from ui import build_message_heading, format_latest_timestamp, format_message_timestamp, format_warning_flag, sort_session_list_items
+from ui import (
+    build_message_heading,
+    format_latest_timestamp,
+    format_message_timestamp,
+    format_warning_flag,
+    resolve_sort_by,
+    resolve_sort_order,
+    sort_session_list_items,
+)
 
 
 def test_format_latest_timestamp_handles_none() -> None:
@@ -41,6 +49,18 @@ def test_build_message_heading_includes_role_and_timestamp() -> None:
     )
 
     assert build_message_heading(message) == '[USER] 2026-04-30T09:30:00+00:00'
+
+
+def test_resolve_sort_by_supports_japanese_labels() -> None:
+    """Japanese sort-by labels should map to internal sort keys."""
+    assert resolve_sort_by('最終更新') == 'latest'
+    assert resolve_sort_by('開始時刻') == 'oldest'
+
+
+def test_resolve_sort_order_supports_japanese_labels() -> None:
+    """Japanese sort-order labels should map to internal sort keys."""
+    assert resolve_sort_order('降順') == 'desc'
+    assert resolve_sort_order('昇順') == 'asc'
 
 
 def test_sort_session_list_items_defaults_to_latest_desc_behavior() -> None:
