@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import tkinter as tk
 from datetime import UTC, datetime
+from pathlib import Path
 
-from models import Message, MessageRole, SessionListItem
+import pytest
+
+from models import Message, MessageRole, Session, SessionListItem, SessionSourceKind
 from ui import (
     ChatLogViewerApp,
     build_message_heading,
@@ -196,4 +199,44 @@ def test_heading_sort_updates_sort_state() -> None:
     app._handle_heading_sort('title')
 
     assert app.sort_order_var.get() == '降順'
+    root.destroy()
+
+
+def test_export_selected_session_writes_markdown_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Export should write the selected session to the chosen Markdown path."""
+    root = tk.Tk()
+    root.withdraw()
+    app = ChatLogViewerApp(root)
+
+    session = Session(
+        session_id='session-1',
+        title='Session Title',
+        source_kind=SessionSourceKind.TRANSCRIPT,
+        messages=[
+            Message(
+                message_id='message-1',
+                role=MessageRole.USER,
+                content='Hello export',
+                timestamp=datetime(2026, 4, 30, 0, 0, 0, tzinfo=UTC),
+            )
+        ],
+        started_at=datetime(2026, 4, 30, 0, 0, 0, tzinfo=UTC),
+        oldest_timestamp=datetime(2026, 4, 30, 0, 0, 0, tzinfo=UTC),
+        latest_timestamp=datetime(2026, 4, 30, 0, 0, 0, tzinfo=UTC),
+    )
+    app._sessions_by_id = {session.session_id: session}
+    app._selected_session_id = session.session_id
+
+    output_path = tmp_path / 'session.md'
+    monkeypatch.setattr('ui.filedialog.asksaveasfilename', lambda **_: str(output_path))
+
+    shown_errors: list[str] = []
+    monkeypatch.setattr('ui.messagebox.showerror', lambda _title, message: shown_errors.append(message))
+
+    app._export_selected_session()
+
+    assert shown_errors == []
+    assert output_path.exists()
+    assert 'Hello export' in output_path.read_text(encoding='utf-8')
+    assert app.status_var.get() == f'Markdown exported: {output_path}'
     root.destroy()

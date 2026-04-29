@@ -5,8 +5,9 @@ from __future__ import annotations
 import tkinter as tk
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from tkinter import ttk
+from tkinter import filedialog, messagebox, ttk
 
+from markdown_export import build_markdown_document
 from models import Message, MessageRole, Session, SessionListItem
 from scanner import collect_scan_issues, scan_sessions, summarize_scan
 from session_list import build_session_list_items
@@ -113,6 +114,7 @@ class ChatLogViewerApp:
         self.detail_var = tk.StringVar(value='No session selected.')
         self.sort_by_var = tk.StringVar(value='最終更新')
         self.sort_order_var = tk.StringVar(value='降順')
+        self._selected_session_id: str | None = None
 
         self._build_layout()
 
@@ -282,8 +284,19 @@ class ChatLogViewerApp:
 
     def _build_detail_panel(self, parent: ttk.Frame) -> None:
         """Create the right placeholder pane."""
-        title_label = ttk.Label(parent, text='Details')
-        title_label.pack(anchor=tk.W, pady=(0, 8))
+        header_frame = ttk.Frame(parent)
+        header_frame.pack(fill=tk.X, pady=(0, 8))
+
+        title_label = ttk.Label(header_frame, text='Details')
+        title_label.pack(side=tk.LEFT)
+
+        self.export_button = ttk.Button(
+            header_frame,
+            text='Markdown 保存',
+            command=self._export_selected_session,
+            state='disabled',
+        )
+        self.export_button.pack(side=tk.RIGHT)
 
         detail_frame = ttk.Frame(parent, relief=tk.GROOVE, padding=12)
         detail_frame.pack(fill=tk.BOTH, expand=True)
@@ -309,6 +322,8 @@ class ChatLogViewerApp:
         """Update the placeholder detail pane from the selected list item."""
         selection = self.session_tree.selection()
         if not selection:
+            self._selected_session_id = None
+            self.export_button.configure(state='disabled')
             self.detail_var.set('No session selected.')
             self._set_detail_text('No session selected.')
             return
@@ -316,11 +331,48 @@ class ChatLogViewerApp:
         session_id, title, message_count, latest, has_warnings = self._tree_item_to_session[selection[0]]
         warning_text = 'Yes' if has_warnings else 'No'
         session = self._sessions_by_id.get(session_id)
+        self._selected_session_id = session_id
+        self.export_button.configure(state='normal' if session is not None else 'disabled')
         self.detail_var.set(f'{title} | Messages: {message_count} | Latest: {latest} | Warnings: {warning_text}')
         if session is None:
             self._set_detail_text('The selected session could not be loaded.')
             return
         self._render_session_messages(session)
+
+    def _export_selected_session(self) -> None:
+        """Export the currently selected session to a Markdown file."""
+        session = self._get_selected_session()
+        if session is None:
+            messagebox.showinfo('Markdown Export', 'No session is selected.')
+            self.status_var.set('Markdown export skipped: no session selected.')
+            return
+
+        document = build_markdown_document(session)
+        selected_path = filedialog.asksaveasfilename(
+            title='Markdown エクスポート',
+            defaultextension='.md',
+            filetypes=[('Markdown files', '*.md'), ('All files', '*.*')],
+            initialfile=document.suggested_filename,
+        )
+        if not selected_path:
+            self.status_var.set('Markdown export cancelled.')
+            return
+
+        output_path = Path(selected_path)
+        try:
+            output_path.write_text(document.body, encoding='utf-8')
+        except OSError as error:
+            messagebox.showerror('Markdown Export', f'Failed to export Markdown: {error}')
+            self.status_var.set(f'Markdown export failed: {output_path}')
+            return
+
+        self.status_var.set(f'Markdown exported: {output_path}')
+
+    def _get_selected_session(self) -> Session | None:
+        """Return the currently selected session, if available."""
+        if self._selected_session_id is None:
+            return None
+        return self._sessions_by_id.get(self._selected_session_id)
 
     def _render_session_messages(self, session: Session) -> None:
         """Render actual session messages in the detail text pane."""
