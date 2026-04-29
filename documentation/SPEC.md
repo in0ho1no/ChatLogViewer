@@ -4,6 +4,8 @@
 
 ## システム概要
 
+関連設計資料: [documentation/DATA_MODEL.md](documentation/DATA_MODEL.md)
+
 Windows ローカルに保存されている GitHub Copilot Chat のチャット履歴を抽出し、一覧表示・閲覧・Markdown 出力を行うデスクトップアプリケーション。
 
 対象は GitHub Copilot Chat のみとし、VS Code の他拡張機能や一般的な AI チャット保存形式は対象外とする。標準的なインストール環境では「起動即スキャン」を実現しつつ、特殊な環境にも対応できる柔軟性を備える。
