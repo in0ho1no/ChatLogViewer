@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import tkinter as tk
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tkinter import ttk
 
@@ -23,15 +23,17 @@ SORT_ORDER_OPTIONS: tuple[tuple[str, str], ...] = (
 
 SORT_BY_LABEL_TO_KEY = dict(SORT_BY_OPTIONS)
 SORT_ORDER_LABEL_TO_KEY = dict(SORT_ORDER_OPTIONS)
+TOKYO_TIMEZONE = timezone(timedelta(hours=9), name='JST')
 
 
 def format_latest_timestamp(value: object) -> str:
     """Format the latest timestamp for the session list."""
     if value is None:
         return 'n/a'
-    iso_value = getattr(value, 'isoformat', None)
-    if callable(iso_value):
-        return str(iso_value(timespec='seconds'))
+    if isinstance(value, datetime):
+        localized = value.astimezone(TOKYO_TIMEZONE) if value.tzinfo is not None else value
+        suffix = ' JST' if localized.tzinfo is not None else ''
+        return f'{localized.strftime("%Y/%m/%d %H:%M:%S")}{suffix}'
     return str(value)
 
 

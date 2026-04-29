@@ -22,10 +22,10 @@ def test_format_latest_timestamp_handles_none() -> None:
 
 
 def test_format_latest_timestamp_formats_datetime_seconds() -> None:
-    """Datetime values should render as ISO strings without microseconds."""
+    """Aware datetimes should render in JST for the session list."""
     value = datetime(2026, 4, 29, 12, 34, 56, tzinfo=UTC)
 
-    assert format_latest_timestamp(value) == '2026-04-29T12:34:56+00:00'
+    assert format_latest_timestamp(value) == '2026/04/29 21:34:56 JST'
 
 
 def test_format_warning_flag_uses_yes_no_labels() -> None:
