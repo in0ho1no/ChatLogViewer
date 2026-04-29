@@ -25,7 +25,7 @@ def test_format_latest_timestamp_formats_datetime_seconds() -> None:
     """Aware datetimes should render in JST for the session list."""
     value = datetime(2026, 4, 29, 12, 34, 56, tzinfo=UTC)
 
-    assert format_latest_timestamp(value) == '2026/04/29 21:34:56 JST'
+    assert format_latest_timestamp(value) == '2026/04/29 21:34:56'
 
 
 def test_format_warning_flag_uses_yes_no_labels() -> None:

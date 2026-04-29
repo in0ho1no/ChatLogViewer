@@ -32,8 +32,7 @@ def format_latest_timestamp(value: object) -> str:
         return 'n/a'
     if isinstance(value, datetime):
         localized = value.astimezone(TOKYO_TIMEZONE) if value.tzinfo is not None else value
-        suffix = ' JST' if localized.tzinfo is not None else ''
-        return f'{localized.strftime("%Y/%m/%d %H:%M:%S")}{suffix}'
+        return localized.strftime('%Y/%m/%d %H:%M:%S')
     return str(value)
 
 
@@ -189,7 +188,7 @@ class ChatLogViewerApp:
         self.session_tree.heading('warnings', text='Warnings')
         self.session_tree.column('#0', width=360, anchor=tk.W)
         self.session_tree.column('messages', width=90, anchor=tk.E)
-        self.session_tree.column('latest', width=180, anchor=tk.W)
+        self.session_tree.column('latest', width=150, anchor=tk.W)
         self.session_tree.column('warnings', width=80, anchor=tk.CENTER)
         self.session_tree.pack(fill=tk.BOTH, expand=True)
         self.session_tree.bind('<<TreeviewSelect>>', self._handle_session_selected)
