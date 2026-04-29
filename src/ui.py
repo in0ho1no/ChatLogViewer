@@ -6,6 +6,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import ttk
 
+from models import Message, MessageRole, Session
 from scanner import collect_scan_issues, scan_sessions, summarize_scan
 from session_list import build_session_list_items
 
@@ -25,6 +26,23 @@ def format_warning_flag(has_warnings: bool) -> str:
     return 'yes' if has_warnings else 'no'
 
 
+def format_message_timestamp(value: object) -> str:
+    """Format a message timestamp for the detail pane."""
+    if value is None:
+        return 'n/a'
+    iso_value = getattr(value, 'isoformat', None)
+    if callable(iso_value):
+        return str(iso_value(timespec='seconds'))
+    return str(value)
+
+
+def build_message_heading(message: Message) -> str:
+    """Build the per-message heading shown in the detail pane."""
+    role_label = 'USER' if message.role is MessageRole.USER else 'AI'
+    timestamp = format_message_timestamp(message.timestamp)
+    return f'[{role_label}] {timestamp}'
+
+
 class ChatLogViewerApp:
     """Minimal Tkinter application shell for browsing scanned sessions."""
 
@@ -34,6 +52,7 @@ class ChatLogViewerApp:
         self.root.title('Chat Log Viewer')
         self.root.geometry('1200x720')
 
+        self._sessions_by_id: dict[str, Session] = {}
         self._tree_item_to_session: dict[str, tuple[str, str, int, str, bool]] = {}
 
         self.status_var = tk.StringVar(value='Ready')
@@ -47,6 +66,7 @@ class ChatLogViewerApp:
         self.root.update_idletasks()
 
         sessions = scan_sessions(root_dir)
+        self._sessions_by_id = {session.session_id: session for session in sessions}
         list_items = build_session_list_items(sessions)
         session_count, warning_count = summarize_scan(sessions)
         issues = collect_scan_issues(sessions)
@@ -82,6 +102,7 @@ class ChatLogViewerApp:
             self._handle_session_selected(None)
         else:
             self.detail_var.set('No sessions found.')
+            self._set_detail_text('No sessions found.')
 
     def _build_layout(self) -> None:
         """Create the main two-pane layout."""
@@ -129,37 +150,71 @@ class ChatLogViewerApp:
         detail_frame = ttk.Frame(parent, relief=tk.GROOVE, padding=12)
         detail_frame.pack(fill=tk.BOTH, expand=True)
 
-        detail_label = ttk.Label(
-            detail_frame,
-            textvariable=self.detail_var,
-            justify=tk.LEFT,
-            anchor=tk.NW,
-            wraplength=540,
-        )
-        detail_label.pack(fill=tk.BOTH, expand=True)
+        detail_title = ttk.Label(detail_frame, textvariable=self.detail_var, justify=tk.LEFT, anchor=tk.W)
+        detail_title.pack(fill=tk.X, pady=(0, 8))
+
+        text_frame = ttk.Frame(detail_frame)
+        text_frame.pack(fill=tk.BOTH, expand=True)
+
+        self.detail_text = tk.Text(text_frame, wrap='word', state='disabled')
+        self.detail_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        scrollbar = ttk.Scrollbar(text_frame, orient=tk.VERTICAL, command=self.detail_text.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.detail_text.configure(yscrollcommand=scrollbar.set)
+        self.detail_text.tag_configure('heading_user', foreground='#0b57d0', spacing1=10, spacing3=2)
+        self.detail_text.tag_configure('heading_assistant', foreground='#137333', spacing1=10, spacing3=2)
+        self.detail_text.tag_configure('content', spacing3=10)
+        self._set_detail_text('No session selected.')
 
     def _handle_session_selected(self, _event: object) -> None:
         """Update the placeholder detail pane from the selected list item."""
         selection = self.session_tree.selection()
         if not selection:
             self.detail_var.set('No session selected.')
+            self._set_detail_text('No session selected.')
             return
 
         session_id, title, message_count, latest, has_warnings = self._tree_item_to_session[selection[0]]
         warning_text = 'Yes' if has_warnings else 'No'
-        self.detail_var.set(
-            '\n'.join(
-                [
-                    f'Title: {title}',
-                    f'Session ID: {session_id}',
-                    f'Messages: {message_count}',
-                    f'Latest activity: {latest}',
-                    f'Warnings: {warning_text}',
-                    '',
-                    'Right pane is currently a placeholder. The full transcript view will be connected next.',
-                ]
-            )
-        )
+        session = self._sessions_by_id.get(session_id)
+        self.detail_var.set(f'{title} | Messages: {message_count} | Latest: {latest} | Warnings: {warning_text}')
+        if session is None:
+            self._set_detail_text('The selected session could not be loaded.')
+            return
+        self._render_session_messages(session)
+
+    def _render_session_messages(self, session: Session) -> None:
+        """Render actual session messages in the detail text pane."""
+        self.detail_text.configure(state='normal')
+        self.detail_text.delete('1.0', tk.END)
+
+        if not session.messages:
+            self.detail_text.insert('1.0', 'This session has no displayable messages.')
+            self.detail_text.configure(state='disabled')
+            return
+
+        for message in session.messages:
+            heading = build_message_heading(message)
+            heading_tag = 'heading_user' if message.role is MessageRole.USER else 'heading_assistant'
+            self.detail_text.insert(tk.END, f'{heading}\n', heading_tag)
+            self.detail_text.insert(tk.END, f'{message.content}\n\n', 'content')
+
+        self.detail_text.configure(state='disabled')
+        self.detail_text.see('1.0')
+
+    def _set_detail_text(self, value: str) -> None:
+        """Replace the detail text content with plain text."""
+        self.detail_text.configure(state='normal')
+        self.detail_text.delete('1.0', tk.END)
+        self.detail_text.insert('1.0', value)
+        self.detail_text.configure(state='disabled')
 
 
-__all__ = ['ChatLogViewerApp', 'format_latest_timestamp', 'format_warning_flag']
+__all__ = [
+    'ChatLogViewerApp',
+    'build_message_heading',
+    'format_latest_timestamp',
+    'format_message_timestamp',
+    'format_warning_flag',
+]
