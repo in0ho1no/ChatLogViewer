@@ -31,6 +31,39 @@ SORT_ORDER_LABEL_TO_KEY = dict(SORT_ORDER_OPTIONS)
 TOKYO_TIMEZONE = timezone(timedelta(hours=9), name='JST')
 
 
+def build_restoration_notice() -> str:
+    """Return the persistent UI notice about transcript-based restoration limits."""
+    return '注: transcript JSONL ベースの表示です。Export Chat と完全一致しない場合があります。'
+
+
+def extract_workspace_storage_id(source_path: Path | None) -> str | None:
+    """Extract the workspaceStorage hash from a transcript path when available."""
+    if source_path is None:
+        return None
+
+    parts = source_path.parts
+    for index, part in enumerate(parts):
+        if part != 'workspaceStorage':
+            continue
+        if index + 1 >= len(parts):
+            return None
+        return parts[index + 1]
+    return None
+
+
+def build_session_reference_text(session: Session | None) -> str:
+    """Build the user-facing reference text for the selected session."""
+    if session is None:
+        return '参照情報: セッション未選択'
+    if session.source_path is None:
+        return '参照情報: 元ファイル情報なし'
+
+    workspace_storage_id = extract_workspace_storage_id(session.source_path)
+    if workspace_storage_id is None:
+        return f'参照情報: {session.source_path}'
+    return f'参照情報: workspaceStorage={workspace_storage_id} | {session.source_path}'
+
+
 def format_latest_timestamp(value: object) -> str:
     """Format the latest timestamp for the session list."""
     if value is None:
@@ -118,6 +151,8 @@ class ChatLogViewerApp:
 
         self.status_var = tk.StringVar(value='Ready')
         self.detail_var = tk.StringVar(value='No session selected.')
+        self.restoration_notice_var = tk.StringVar(value=build_restoration_notice())
+        self.reference_var = tk.StringVar(value=build_session_reference_text(None))
         self.sort_by_var = tk.StringVar(value='最終更新')
         self.sort_order_var = tk.StringVar(value='降順')
         self._selected_session_id: str | None = None
@@ -321,6 +356,25 @@ class ChatLogViewerApp:
         detail_title = ttk.Label(detail_frame, textvariable=self.detail_var, justify=tk.LEFT, anchor=tk.W)
         detail_title.pack(fill=tk.X, pady=(0, 8))
 
+        restoration_notice_label = ttk.Label(
+            detail_frame,
+            textvariable=self.restoration_notice_var,
+            justify=tk.LEFT,
+            anchor=tk.W,
+            foreground='#8a4b00',
+            wraplength=700,
+        )
+        restoration_notice_label.pack(fill=tk.X, pady=(0, 8))
+
+        reference_label = ttk.Label(
+            detail_frame,
+            textvariable=self.reference_var,
+            justify=tk.LEFT,
+            anchor=tk.W,
+            wraplength=700,
+        )
+        reference_label.pack(fill=tk.X, pady=(0, 8))
+
         text_frame = ttk.Frame(detail_frame)
         text_frame.pack(fill=tk.BOTH, expand=True)
 
@@ -344,6 +398,7 @@ class ChatLogViewerApp:
             self.export_button.configure(state='disabled')
             self.open_source_button.configure(state='disabled')
             self.detail_var.set('No session selected.')
+            self.reference_var.set(build_session_reference_text(None))
             self._set_detail_text('No session selected.')
             return
 
@@ -362,13 +417,16 @@ class ChatLogViewerApp:
         if len(selected_sessions) > 1:
             total_messages = sum(selected.message_count for selected in selected_sessions)
             self.detail_var.set(f'{len(selected_sessions)} sessions selected | Messages: {total_messages}')
+            self.reference_var.set('参照情報: 複数セッション選択中のため個別表示なし')
             self._set_detail_text('複数セッションを選択中です。先頭1件の詳細表示は行わず、Markdown 保存で選択中セッションをまとめて出力できます。')
             return
 
         self.detail_var.set(f'{title} | Messages: {message_count} | Latest: {latest} | Warnings: {warning_text}')
         if session is None:
+            self.reference_var.set(build_session_reference_text(None))
             self._set_detail_text('The selected session could not be loaded.')
             return
+        self.reference_var.set(build_session_reference_text(session))
         self._render_session_messages(session)
 
     def _export_selected_session(self) -> None:
@@ -489,6 +547,9 @@ class ChatLogViewerApp:
 __all__ = [
     'ChatLogViewerApp',
     'build_message_heading',
+    'build_restoration_notice',
+    'build_session_reference_text',
+    'extract_workspace_storage_id',
     'format_latest_timestamp',
     'format_message_timestamp',
     'format_warning_flag',

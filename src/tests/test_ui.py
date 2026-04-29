@@ -12,6 +12,9 @@ from models import Message, MessageRole, Session, SessionListItem, SessionSource
 from ui import (
     ChatLogViewerApp,
     build_message_heading,
+    build_restoration_notice,
+    build_session_reference_text,
+    extract_workspace_storage_id,
     format_latest_timestamp,
     format_message_timestamp,
     format_warning_flag,
@@ -74,6 +77,41 @@ def test_build_message_heading_includes_role_and_timestamp() -> None:
     )
 
     assert build_message_heading(message) == '[USER] 2026-04-30T09:30:00+00:00'
+
+
+def test_build_restoration_notice_mentions_incomplete_restoration() -> None:
+    """The persistent notice should explain that transcript restoration is not complete."""
+    notice = build_restoration_notice()
+
+    assert 'transcript JSONL' in notice
+    assert '完全一致しない' in notice
+
+
+def test_extract_workspace_storage_id_reads_hash_from_transcript_path() -> None:
+    """The workspaceStorage hash should be derived from the source path."""
+    source_path = Path(
+        r'C:\Users\seigy\AppData\Roaming\Code\User\workspaceStorage\2b31b85a7f8fe44be7892e126fad3555\GitHub.copilot-chat\transcripts\session-1.jsonl'
+    )
+
+    assert extract_workspace_storage_id(source_path) == '2b31b85a7f8fe44be7892e126fad3555'
+
+
+def test_build_session_reference_text_includes_workspace_hash_and_source_path() -> None:
+    """Reference text should make the underlying transcript location traceable."""
+    source_path = Path(
+        r'C:\Users\seigy\AppData\Roaming\Code\User\workspaceStorage\2b31b85a7f8fe44be7892e126fad3555\GitHub.copilot-chat\transcripts\session-1.jsonl'
+    )
+    session = Session(
+        session_id='session-1',
+        title='Session Title',
+        source_kind=SessionSourceKind.TRANSCRIPT,
+        source_path=source_path,
+    )
+
+    reference = build_session_reference_text(session)
+
+    assert 'workspaceStorage=2b31b85a7f8fe44be7892e126fad3555' in reference
+    assert str(source_path) in reference
 
 
 def test_resolve_sort_by_supports_japanese_labels() -> None:
