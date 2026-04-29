@@ -12,8 +12,11 @@ from scanner import collect_scan_issues, scan_sessions, summarize_scan
 from session_list import build_session_list_items
 
 SORT_BY_OPTIONS: tuple[tuple[str, str], ...] = (
+    ('タイトル', 'title'),
+    ('メッセージ数', 'message_count'),
     ('最終更新', 'latest'),
     ('開始時刻', 'oldest'),
+    ('Warnings', 'warnings'),
 )
 
 SORT_ORDER_OPTIONS: tuple[tuple[str, str], ...] = (
@@ -74,15 +77,21 @@ def sort_session_list_items(
     sort_order: str,
 ) -> list[SessionListItem]:
     """Sort session list items by the selected timestamp field and order."""
-    timestamp_attr = 'latest_timestamp' if sort_by == 'latest' else 'oldest_timestamp'
     reverse = sort_order == 'desc'
 
-    def sort_key(item: SessionListItem) -> tuple[bool, datetime, str]:
-        timestamp = getattr(item, timestamp_attr)
+    def sort_key(item: SessionListItem) -> tuple[object, ...]:
+        if sort_by == 'title':
+            return (item.display_title.casefold(), item.session_id)
+        if sort_by == 'message_count':
+            return (item.message_count, item.display_title.casefold(), item.session_id)
+        if sort_by == 'warnings':
+            return (item.has_warnings, item.display_title.casefold(), item.session_id)
+        timestamp = item.latest_timestamp if sort_by == 'latest' else item.oldest_timestamp
+
         fallback = datetime.min if reverse else datetime.max
         normalized = timestamp if isinstance(timestamp, datetime) else fallback
         missing = timestamp is None
-        return (missing, normalized, item.display_title.casefold())
+        return (missing, normalized, item.display_title.casefold(), item.session_id)
 
     return sorted(items, key=sort_key, reverse=reverse)
 
@@ -164,7 +173,7 @@ class ChatLogViewerApp:
             textvariable=self.sort_by_var,
             values=tuple(label for label, _ in SORT_BY_OPTIONS),
             state='readonly',
-            width=10,
+            width=12,
         )
         sort_by_box.pack(side=tk.LEFT, padx=(6, 12))
         sort_by_box.bind('<<ComboboxSelected>>', self._handle_sort_changed)
@@ -182,10 +191,10 @@ class ChatLogViewerApp:
 
         columns = ('messages', 'latest', 'warnings')
         self.session_tree = ttk.Treeview(parent, columns=columns, show='tree headings', selectmode='browse')
-        self.session_tree.heading('#0', text='タイトル')
-        self.session_tree.heading('messages', text='メッセージ数')
-        self.session_tree.heading('latest', text='最終更新')
-        self.session_tree.heading('warnings', text='Warnings')
+        self.session_tree.heading('#0', text='タイトル', command=lambda: self._handle_heading_sort('title'))
+        self.session_tree.heading('messages', text='メッセージ数', command=lambda: self._handle_heading_sort('message_count'))
+        self.session_tree.heading('latest', text='最終更新', command=lambda: self._handle_heading_sort('latest'))
+        self.session_tree.heading('warnings', text='Warnings', command=lambda: self._handle_heading_sort('warnings'))
         self.session_tree.column('#0', width=360, anchor=tk.W)
         self.session_tree.column('messages', width=90, anchor=tk.E)
         self.session_tree.column('latest', width=150, anchor=tk.W)
@@ -242,6 +251,34 @@ class ChatLogViewerApp:
         """Apply the selected sort settings to the session tree."""
         self._refresh_session_tree()
         self._handle_session_selected(None)
+
+    def _handle_heading_sort(self, sort_key: str) -> None:
+        """Apply or toggle sorting when a column heading is clicked."""
+        current_sort_by = resolve_sort_by(self.sort_by_var.get())
+        current_sort_order = resolve_sort_order(self.sort_order_var.get())
+
+        next_sort_order = 'asc'
+        if current_sort_by == sort_key:
+            next_sort_order = 'asc' if current_sort_order == 'desc' else 'desc'
+
+        self.sort_by_var.set(self._label_for_sort_by(sort_key))
+        self.sort_order_var.set(self._label_for_sort_order(next_sort_order))
+        self._refresh_session_tree()
+        self._handle_session_selected(None)
+
+    def _label_for_sort_by(self, sort_key: str) -> str:
+        """Return the UI label for a sort key."""
+        for label, key in SORT_BY_OPTIONS:
+            if key == sort_key:
+                return label
+        return sort_key
+
+    def _label_for_sort_order(self, sort_order: str) -> str:
+        """Return the UI label for a sort order key."""
+        for label, key in SORT_ORDER_OPTIONS:
+            if key == sort_order:
+                return label
+        return sort_order
 
     def _build_detail_panel(self, parent: ttk.Frame) -> None:
         """Create the right placeholder pane."""
