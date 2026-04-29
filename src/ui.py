@@ -181,9 +181,9 @@ class ChatLogViewerApp:
 
         columns = ('messages', 'latest', 'warnings')
         self.session_tree = ttk.Treeview(parent, columns=columns, show='tree headings', selectmode='browse')
-        self.session_tree.heading('#0', text='Title')
-        self.session_tree.heading('messages', text='Messages')
-        self.session_tree.heading('latest', text='Latest')
+        self.session_tree.heading('#0', text='タイトル')
+        self.session_tree.heading('messages', text='メッセージ数')
+        self.session_tree.heading('latest', text='最終更新')
         self.session_tree.heading('warnings', text='Warnings')
         self.session_tree.column('#0', width=360, anchor=tk.W)
         self.session_tree.column('messages', width=90, anchor=tk.E)
