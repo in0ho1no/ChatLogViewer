@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import tkinter as tk
+from datetime import datetime
 from pathlib import Path
 from tkinter import ttk
 
-from models import Message, MessageRole, Session
+from models import Message, MessageRole, Session, SessionListItem
 from scanner import collect_scan_issues, scan_sessions, summarize_scan
 from session_list import build_session_list_items
 
@@ -43,6 +44,25 @@ def build_message_heading(message: Message) -> str:
     return f'[{role_label}] {timestamp}'
 
 
+def sort_session_list_items(
+    items: list[SessionListItem],
+    sort_by: str,
+    sort_order: str,
+) -> list[SessionListItem]:
+    """Sort session list items by the selected timestamp field and order."""
+    timestamp_attr = 'latest_timestamp' if sort_by == 'latest' else 'oldest_timestamp'
+    reverse = sort_order == 'desc'
+
+    def sort_key(item: SessionListItem) -> tuple[bool, datetime, str]:
+        timestamp = getattr(item, timestamp_attr)
+        fallback = datetime.min if reverse else datetime.max
+        normalized = timestamp if isinstance(timestamp, datetime) else fallback
+        missing = timestamp is None
+        return (missing, normalized, item.display_title.casefold())
+
+    return sorted(items, key=sort_key, reverse=reverse)
+
+
 class ChatLogViewerApp:
     """Minimal Tkinter application shell for browsing scanned sessions."""
 
@@ -53,10 +73,13 @@ class ChatLogViewerApp:
         self.root.geometry('1200x720')
 
         self._sessions_by_id: dict[str, Session] = {}
+        self._session_list_items: list[SessionListItem] = []
         self._tree_item_to_session: dict[str, tuple[str, str, int, str, bool]] = {}
 
         self.status_var = tk.StringVar(value='Ready')
         self.detail_var = tk.StringVar(value='No session selected.')
+        self.sort_by_var = tk.StringVar(value='latest')
+        self.sort_order_var = tk.StringVar(value='desc')
 
         self._build_layout()
 
@@ -67,36 +90,15 @@ class ChatLogViewerApp:
 
         sessions = scan_sessions(root_dir)
         self._sessions_by_id = {session.session_id: session for session in sessions}
-        list_items = build_session_list_items(sessions)
+        self._session_list_items = build_session_list_items(sessions)
         session_count, warning_count = summarize_scan(sessions)
         issues = collect_scan_issues(sessions)
 
-        self.session_tree.delete(*self.session_tree.get_children())
-        self._tree_item_to_session.clear()
-
-        for item in list_items:
-            tree_item_id = self.session_tree.insert(
-                '',
-                'end',
-                text=item.display_title,
-                values=(
-                    str(item.message_count),
-                    format_latest_timestamp(item.latest_timestamp),
-                    format_warning_flag(item.has_warnings),
-                ),
-            )
-            self._tree_item_to_session[tree_item_id] = (
-                item.session_id,
-                item.display_title,
-                item.message_count,
-                format_latest_timestamp(item.latest_timestamp),
-                item.has_warnings,
-            )
-
         issue_count = len(issues)
         self.status_var.set(f'Sessions: {session_count}  Warnings: {warning_count}  Issues: {issue_count}  Root: {root_dir}')
+        self._refresh_session_tree()
 
-        if list_items:
+        if self._session_list_items:
             first_item = self.session_tree.get_children()[0]
             self.session_tree.selection_set(first_item)
             self._handle_session_selected(None)
@@ -129,6 +131,31 @@ class ChatLogViewerApp:
         title_label = ttk.Label(parent, text='Sessions')
         title_label.pack(anchor=tk.W, pady=(0, 8))
 
+        controls = ttk.Frame(parent)
+        controls.pack(fill=tk.X, pady=(0, 8))
+
+        ttk.Label(controls, text='Sort by').pack(side=tk.LEFT)
+        sort_by_box = ttk.Combobox(
+            controls,
+            textvariable=self.sort_by_var,
+            values=('latest', 'oldest'),
+            state='readonly',
+            width=10,
+        )
+        sort_by_box.pack(side=tk.LEFT, padx=(6, 12))
+        sort_by_box.bind('<<ComboboxSelected>>', self._handle_sort_changed)
+
+        ttk.Label(controls, text='Order').pack(side=tk.LEFT)
+        sort_order_box = ttk.Combobox(
+            controls,
+            textvariable=self.sort_order_var,
+            values=('desc', 'asc'),
+            state='readonly',
+            width=8,
+        )
+        sort_order_box.pack(side=tk.LEFT, padx=(6, 0))
+        sort_order_box.bind('<<ComboboxSelected>>', self._handle_sort_changed)
+
         columns = ('messages', 'latest', 'warnings')
         self.session_tree = ttk.Treeview(parent, columns=columns, show='tree headings', selectmode='browse')
         self.session_tree.heading('#0', text='Title')
@@ -141,6 +168,56 @@ class ChatLogViewerApp:
         self.session_tree.column('warnings', width=80, anchor=tk.CENTER)
         self.session_tree.pack(fill=tk.BOTH, expand=True)
         self.session_tree.bind('<<TreeviewSelect>>', self._handle_session_selected)
+
+    def _refresh_session_tree(self) -> None:
+        """Rebuild the session tree using the selected sort settings."""
+        selected_session_id: str | None = None
+        current_selection = self.session_tree.selection()
+        if current_selection:
+            selected_session_id = self._tree_item_to_session.get(current_selection[0], ('', '', 0, '', False))[0] or None
+
+        sorted_items = sort_session_list_items(
+            self._session_list_items,
+            sort_by=self.sort_by_var.get(),
+            sort_order=self.sort_order_var.get(),
+        )
+
+        self.session_tree.delete(*self.session_tree.get_children())
+        self._tree_item_to_session.clear()
+
+        selected_row_id: str | None = None
+        for item in sorted_items:
+            tree_item_id = self.session_tree.insert(
+                '',
+                'end',
+                text=item.display_title,
+                values=(
+                    str(item.message_count),
+                    format_latest_timestamp(item.latest_timestamp),
+                    format_warning_flag(item.has_warnings),
+                ),
+            )
+            self._tree_item_to_session[tree_item_id] = (
+                item.session_id,
+                item.display_title,
+                item.message_count,
+                format_latest_timestamp(item.latest_timestamp),
+                item.has_warnings,
+            )
+            if item.session_id == selected_session_id:
+                selected_row_id = tree_item_id
+
+        if selected_row_id is None and self.session_tree.get_children():
+            selected_row_id = self.session_tree.get_children()[0]
+
+        if selected_row_id is not None:
+            self.session_tree.selection_set(selected_row_id)
+            self.session_tree.focus(selected_row_id)
+
+    def _handle_sort_changed(self, _event: object) -> None:
+        """Apply the selected sort settings to the session tree."""
+        self._refresh_session_tree()
+        self._handle_session_selected(None)
 
     def _build_detail_panel(self, parent: ttk.Frame) -> None:
         """Create the right placeholder pane."""
@@ -217,4 +294,5 @@ __all__ = [
     'format_latest_timestamp',
     'format_message_timestamp',
     'format_warning_flag',
+    'sort_session_list_items',
 ]
