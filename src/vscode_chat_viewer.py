@@ -812,7 +812,7 @@ class ChatLogViewerApp:
                 return (session.message_count, str(session.session_path).casefold())
             if self.sort_column == 'updated_at':
                 return (session.updated_at_ms or 0, str(session.session_path).casefold())
-            return (session.preview_text.casefold(), str(session.session_path).casefold())
+            return (session.display_title.casefold(), str(session.session_path).casefold())
 
         self.sessions.sort(key=sort_key, reverse=self.sort_desc)
 
@@ -826,7 +826,7 @@ class ChatLogViewerApp:
 
         for session in self.sessions:
             item_id = str(session.session_path)
-            preview = shorten_text(session.preview_text, DEFAULT_PREVIEW_LENGTH)
+            preview = shorten_text(session.display_title, DEFAULT_PREVIEW_LENGTH)
             self.tree.insert(
                 '',
                 'end',
@@ -848,7 +848,7 @@ class ChatLogViewerApp:
         labels = {
             'message_count': 'メッセージ数',
             'updated_at': '最終更新日時',
-            'preview': '先頭メッセージ',
+            'preview': 'タイトル / 先頭メッセージ',
         }
         for column_name, label in labels.items():
             if self.sort_column == column_name:
