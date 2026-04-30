@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+import re
 import sys
 import unittest
 import uuid
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -21,7 +22,6 @@ from vscode_chat_viewer import (
     parse_chat_session,
     resolve_workspace_open_path,
 )
-
 
 TEST_TMP_ROOT = Path(__file__).resolve().parent / '_tmp'
 
@@ -116,24 +116,24 @@ class ParseChatSessionTests(unittest.TestCase):
 
             session = parse_chat_session(session_path, 'D:\\work\\sample', workspace_dir)
 
-        self.assertEqual(session.session_id, 'session-1')
-        self.assertEqual(session.custom_title, 'Custom Title')
-        self.assertEqual(session.model_id, 'copilot/test')
-        self.assertEqual(session.preview_text, '最初の質問です')
-        self.assertEqual(session.message_count, 4)
-        self.assertEqual([message.role for message in session.messages], ['user', 'assistant', 'user', 'assistant'])
-        self.assertEqual(session.messages[1].text, '最初の応答段落です。\n\n追加の応答です。')
-        self.assertEqual(session.messages[3].text, '二つ目の応答です。')
+        assert session.session_id == 'session-1'
+        assert session.custom_title == 'Custom Title'
+        assert session.model_id == 'copilot/test'
+        assert session.preview_text == '最初の質問です'
+        assert session.message_count == 4
+        assert [message.role for message in session.messages] == ['user', 'assistant', 'user', 'assistant']
+        assert session.messages[1].text == '最初の応答段落です。\n\n追加の応答です。'
+        assert session.messages[3].text == '二つ目の応答です。'
 
         markdown = build_markdown(session)
-        self.assertIn('# Chat Session', markdown)
-        self.assertIn('## Metadata', markdown)
-        self.assertIn('# Conversation', markdown)
-        self.assertIn('## User', markdown)
-        self.assertIn('## Assistant', markdown)
-        self.assertIn('- User: `Unknown`', markdown)
-        self.assertIn(format_timestamp(1710000001000, '%Y/%m/%d %H:%M'), markdown)
-        self.assertNotIn('## 1. User', markdown)
+        assert '# Chat Session' in markdown
+        assert '## Metadata' in markdown
+        assert '# Conversation' in markdown
+        assert '## User' in markdown
+        assert '## Assistant' in markdown
+        assert '- User: `Unknown`' in markdown
+        assert format_timestamp(1710000001000, '%Y/%m/%d %H:%M') in markdown
+        assert '## 1. User' not in markdown
 
     def test_parse_session_skips_broken_tail_line(self) -> None:
         """The parser should keep earlier messages even if the final line is truncated."""
@@ -169,10 +169,10 @@ class ParseChatSessionTests(unittest.TestCase):
 
             session = parse_chat_session(session_path, 'D:\\work\\sample', workspace_dir)
 
-        self.assertEqual(session.message_count, 2)
-        self.assertTrue(session.parse_errors)
-        self.assertEqual(session.messages[0].text, '質問')
-        self.assertEqual(session.messages[1].text, '応答')
+        assert session.message_count == 2
+        assert session.parse_errors
+        assert session.messages[0].text == '質問'
+        assert session.messages[1].text == '応答'
 
 
 class HelperFunctionTests(unittest.TestCase):
@@ -181,22 +181,22 @@ class HelperFunctionTests(unittest.TestCase):
     def test_format_timestamp_for_list_includes_time(self) -> None:
         """List timestamps should keep date and time."""
         formatted = format_timestamp(1710000000000, '%Y/%m/%d %H:%M')
-        self.assertRegex(formatted, r'^\d{4}/\d{2}/\d{2} \d{2}:\d{2}$')
+        assert re.match(r'^\d{4}/\d{2}/\d{2} \d{2}:\d{2}$', formatted)
 
     def test_decode_file_uri_for_windows_drive_path(self) -> None:
         """A VS Code file URI should decode into a Windows path."""
         decoded = decode_file_uri('file:///d%3A/work/project')
-        self.assertEqual(decoded, 'D:\\work\\project')
+        assert decoded == 'D:\\work\\project'
 
     def test_extract_windows_username_from_user_profile_path(self) -> None:
         """Windows profile paths should expose the username."""
         username = extract_windows_username(Path(r'C:\Users\seigy\AppData\Roaming\Code\User\workspaceStorage\a\chatSessions\b.jsonl'))
-        self.assertEqual(username, 'seigy')
+        assert username == 'seigy'
 
     def test_make_unique_filename_adds_suffix(self) -> None:
         """Bulk export filenames should be deduplicated predictably."""
         used_names = {'session.md', 'session (2).md'}
-        self.assertEqual(make_unique_filename('session', used_names), 'session (3).md')
+        assert make_unique_filename('session', used_names) == 'session (3).md'
 
     def test_build_assistant_response_text_merges_inline_references_and_overlaps(self) -> None:
         """Visible fragments should keep inline references and absorb overlapping tails."""
@@ -214,9 +214,9 @@ class HelperFunctionTests(unittest.TestCase):
                 {'value': ' に静的エラーもありませんでした。\n\n残る注意点があります。'},
             ],
         )
-        self.assertIn('`src/mtpj_deps.py` では XML の安全化が入っており、`SECURITY.md` でも注意が追加されています。', text)
-        self.assertIn('`src/mtpj_deps.py` と `src/tests/test_mtpj_deps.py` に静的エラーもありませんでした。', text)
-        self.assertEqual(text.count('に静的エラーもありませんでした。'), 1)
+        assert '`src/mtpj_deps.py` では XML の安全化が入っており、`SECURITY.md` でも注意が追加されています。' in text
+        assert '`src/mtpj_deps.py` と `src/tests/test_mtpj_deps.py` に静的エラーもありませんでした。' in text
+        assert text.count('に静的エラーもありませんでした。') == 1
 
     def test_build_assistant_message_text_prefers_clean_tool_round_responses(self) -> None:
         """Cleaner tool round responses should be preferred over broken progress fragments."""
@@ -225,7 +225,12 @@ class HelperFunctionTests(unittest.TestCase):
                 'metadata': {
                     'toolCallRounds': [
                         {'response': 'まず変更ファイルを把握してから、`SECURITY.md` と実装の該当箇所を突き合わせます。'},
-                        {'response': 'テストで安全性の回帰がないかを確認します。`SECURITY.md` だけでなく、XML・出力サニタイズ・既存機能の回帰もまとめて見ます。'},
+                        {
+                            'response': (
+                                'テストで安全性の回帰がないかを確認します。`SECURITY.md` だけでなく、'
+                                'XML・出力サニタイズ・既存機能の回帰もまとめて見ます。'
+                            )
+                        },
                     ]
                 }
             },
@@ -237,8 +242,8 @@ class HelperFunctionTests(unittest.TestCase):
             ],
         }
         text = build_assistant_message_text(request)
-        self.assertIn('`SECURITY.md` と実装の該当箇所を突き合わせます。', text)
-        self.assertIn('重大な指摘はありませんでした。', text)
+        assert '`SECURITY.md` と実装の該当箇所を突き合わせます。' in text
+        assert '重大な指摘はありませんでした。' in text
 
     def test_build_assistant_message_text_avoids_duplicate_final_answer(self) -> None:
         """A final answer already present in cleaner progress text should not be appended twice."""
@@ -247,7 +252,9 @@ class HelperFunctionTests(unittest.TestCase):
                 'metadata': {
                     'toolCallRounds': [
                         {
-                            'response': '重大な指摘はありませんでした。[src/mtpj_deps.py](src/mtpj_deps.py) と [SECURITY.md](SECURITY.md) を確認しました。'
+                            'response': (
+                                '重大な指摘はありませんでした。[src/mtpj_deps.py](src/mtpj_deps.py) と [SECURITY.md](SECURITY.md) を確認しました。'
+                            )
                         }
                     ]
                 }
@@ -258,12 +265,12 @@ class HelperFunctionTests(unittest.TestCase):
             ],
         }
         text = build_assistant_message_text(request)
-        self.assertEqual(text.count('重大な指摘はありませんでした。'), 1)
+        assert text.count('重大な指摘はありませんでした。') == 1
 
     def test_resolve_workspace_open_path_returns_existing_path(self) -> None:
         """Existing workspace paths should resolve for Explorer launch."""
         resolved = resolve_workspace_open_path(str(Path(__file__).resolve()))
-        self.assertIsNotNone(resolved)
+        assert resolved is not None
 
 
 if __name__ == '__main__':

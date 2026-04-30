@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime
 import json
 import os
-from pathlib import Path
 import re
 import tkinter as tk
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Any
 from urllib.parse import unquote, urlparse
 from urllib.request import url2pathname
-
 
 APP_TITLE = 'VS Code Chat Log Viewer'
 DEFAULT_PREVIEW_LENGTH = 20
@@ -91,14 +90,16 @@ def extract_text(value: Any) -> str:
     if isinstance(value, str):
         return value
     if isinstance(value, dict):
-        if isinstance(value.get('text'), str):
-            return value['text']
+        text_val = value.get('text')
+        if isinstance(text_val, str):
+            return text_val
         parts = value.get('parts')
         if isinstance(parts, list):
             fragments = [extract_text(part) for part in parts]
             return ''.join(fragment for fragment in fragments if fragment)
-        if isinstance(value.get('value'), str):
-            return value['value']
+        value_val = value.get('value')
+        if isinstance(value_val, str):
+            return value_val
     if isinstance(value, list):
         return ''.join(fragment for fragment in (extract_text(item) for item in value) if fragment)
     return ''
@@ -140,7 +141,7 @@ def load_workspace_label(workspace_storage_dir: Path) -> str:
 
 
 def extract_windows_username(path: Path) -> str | None:
-    """Extract the Windows username from a path under C:\\Users\\<name>."""
+    r"""Extract the Windows username from a path under C:\Users\<name>."""
     parts = path.parts
     for index, part in enumerate(parts[:-1]):
         if part.casefold() == 'users' and index + 1 < len(parts):
@@ -784,6 +785,7 @@ class ChatLogViewerApp:
 
     def _sort_sessions(self) -> None:
         """Sort the in-memory session list using the current sort state."""
+
         def sort_key(session: ChatSession) -> tuple[Any, str]:
             if self.sort_column == 'message_count':
                 return (session.message_count, str(session.session_path).casefold())
@@ -900,17 +902,17 @@ __all__ = [
     'ChatLogViewerApp',
     'ChatMessage',
     'ChatSession',
-    'build_markdown',
     'build_assistant_message_text',
+    'build_markdown',
     'decode_file_uri',
     'discover_chat_sessions',
     'extract_text',
     'extract_windows_username',
     'launch_app',
     'load_workspace_label',
-    'resolve_workspace_open_path',
     'make_unique_filename',
     'parse_chat_session',
+    'resolve_workspace_open_path',
     'sanitize_filename',
     'shorten_text',
 ]
