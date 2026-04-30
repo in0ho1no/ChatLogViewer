@@ -121,6 +121,7 @@ class ParseChatSessionTests(unittest.TestCase):
         self.assertIn('# Conversation', markdown)
         self.assertIn('## User', markdown)
         self.assertIn('## Assistant', markdown)
+        self.assertIn(format_timestamp(1710000001000, '%Y/%m/%d %H:%M'), markdown)
         self.assertNotIn('## 1. User', markdown)
 
     def test_parse_session_skips_broken_tail_line(self) -> None:

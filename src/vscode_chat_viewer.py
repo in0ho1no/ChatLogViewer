@@ -314,6 +314,9 @@ def build_markdown(session: ChatSession) -> str:
             role_label = 'User' if message.role == 'user' else 'Assistant'
             lines.append(f'## {role_label}')
             lines.append('')
+            if message.role == 'user' and message.timestamp_ms is not None:
+                lines.append(format_timestamp(message.timestamp_ms, '%Y/%m/%d %H:%M'))
+                lines.append('')
             lines.append(message.text.rstrip())
             lines.append('')
 
