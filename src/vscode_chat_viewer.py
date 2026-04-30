@@ -72,10 +72,10 @@ class ChatSession:
 
     @property
     def updated_at_label(self) -> str:
-        """Return the updated date formatted for the list view."""
+        """Return the updated timestamp formatted for the list view."""
         if self.updated_at_ms is None:
             return ''
-        return format_timestamp(self.updated_at_ms, '%Y/%m/%d')
+        return format_timestamp(self.updated_at_ms, '%Y/%m/%d %H:%M')
 
 
 def format_timestamp(timestamp_ms: int, pattern: str) -> str:
@@ -136,6 +136,16 @@ def load_workspace_label(workspace_storage_dir: Path) -> str:
             decoded = decode_file_uri(value)
             return decoded or str(workspace_storage_dir)
     return str(workspace_storage_dir)
+
+
+def resolve_workspace_open_path(workspace_path: str) -> Path | None:
+    """Resolve a workspace label into a path that can be opened in Explorer."""
+    if not workspace_path:
+        return None
+    candidate = Path(workspace_path)
+    if candidate.exists():
+        return candidate
+    return None
 
 
 def append_assistant_chunk(chunks: list[str], text: str) -> None:
@@ -416,6 +426,7 @@ class ChatLogViewerApp:
 
         ttk.Label(info, text='ワークスペース:', width=10).grid(row=1, column=0, sticky='nw', pady=(6, 0))
         ttk.Label(info, textvariable=self.workspace_var, justify='left').grid(row=1, column=1, sticky='ew', pady=(6, 0))
+        ttk.Button(info, text='Workspaceを開く', command=self.open_selected_workspace).grid(row=1, column=2, padx=(8, 0), pady=(6, 0))
 
         text_frame = ttk.Frame(right)
         text_frame.grid(row=1, column=0, sticky='nsew')
@@ -691,6 +702,20 @@ class ChatLogViewerApp:
 
         os.startfile(folder)  # type: ignore[attr-defined]
 
+    def open_selected_workspace(self) -> None:
+        """Open the selected workspace path in Explorer."""
+        sessions = self.get_selected_sessions()
+        if not sessions:
+            messagebox.showinfo(APP_TITLE, '先に履歴を選択してください。')
+            return
+
+        workspace_path = resolve_workspace_open_path(sessions[0].workspace_path)
+        if workspace_path is None:
+            messagebox.showerror(APP_TITLE, f'Workspace を開けませんでした。\n\n{sessions[0].workspace_path}')
+            return
+
+        os.startfile(workspace_path)  # type: ignore[attr-defined]
+
 
 def shorten_text(text: str, limit: int) -> str:
     """Shorten text for list display without breaking empty values."""
@@ -736,6 +761,7 @@ __all__ = [
     'extract_text',
     'launch_app',
     'load_workspace_label',
+    'resolve_workspace_open_path',
     'make_unique_filename',
     'parse_chat_session',
     'sanitize_filename',

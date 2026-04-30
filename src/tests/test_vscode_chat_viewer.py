@@ -10,7 +10,7 @@ import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from vscode_chat_viewer import build_markdown, decode_file_uri, make_unique_filename, parse_chat_session
+from vscode_chat_viewer import build_markdown, decode_file_uri, format_timestamp, make_unique_filename, parse_chat_session, resolve_workspace_open_path
 
 
 TEST_TMP_ROOT = Path(__file__).resolve().parent / '_tmp'
@@ -166,6 +166,11 @@ class ParseChatSessionTests(unittest.TestCase):
 class HelperFunctionTests(unittest.TestCase):
     """Tests for helper functions."""
 
+    def test_format_timestamp_for_list_includes_time(self) -> None:
+        """List timestamps should keep date and time."""
+        formatted = format_timestamp(1710000000000, '%Y/%m/%d %H:%M')
+        self.assertRegex(formatted, r'^\d{4}/\d{2}/\d{2} \d{2}:\d{2}$')
+
     def test_decode_file_uri_for_windows_drive_path(self) -> None:
         """A VS Code file URI should decode into a Windows path."""
         decoded = decode_file_uri('file:///d%3A/work/project')
@@ -175,6 +180,11 @@ class HelperFunctionTests(unittest.TestCase):
         """Bulk export filenames should be deduplicated predictably."""
         used_names = {'session.md', 'session (2).md'}
         self.assertEqual(make_unique_filename('session', used_names), 'session (3).md')
+
+    def test_resolve_workspace_open_path_returns_existing_path(self) -> None:
+        """Existing workspace paths should resolve for Explorer launch."""
+        resolved = resolve_workspace_open_path(str(Path(__file__).resolve()))
+        self.assertIsNotNone(resolved)
 
 
 if __name__ == '__main__':
