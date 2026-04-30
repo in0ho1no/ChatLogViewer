@@ -10,7 +10,7 @@ import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from vscode_chat_viewer import build_markdown, decode_file_uri, parse_chat_session
+from vscode_chat_viewer import build_markdown, decode_file_uri, make_unique_filename, parse_chat_session
 
 
 TEST_TMP_ROOT = Path(__file__).resolve().parent / '_tmp'
@@ -116,9 +116,12 @@ class ParseChatSessionTests(unittest.TestCase):
         self.assertEqual(session.messages[3].text, '二つ目の応答です。')
 
         markdown = build_markdown(session)
-        self.assertIn('# Custom Title', markdown)
-        self.assertIn('## 1. User', markdown)
-        self.assertIn('## 2. Assistant', markdown)
+        self.assertIn('# Chat Session', markdown)
+        self.assertIn('## Metadata', markdown)
+        self.assertIn('# Conversation', markdown)
+        self.assertIn('## User', markdown)
+        self.assertIn('## Assistant', markdown)
+        self.assertNotIn('## 1. User', markdown)
 
     def test_parse_session_skips_broken_tail_line(self) -> None:
         """The parser should keep earlier messages even if the final line is truncated."""
@@ -167,6 +170,11 @@ class HelperFunctionTests(unittest.TestCase):
         """A VS Code file URI should decode into a Windows path."""
         decoded = decode_file_uri('file:///d%3A/work/project')
         self.assertEqual(decoded, 'D:\\work\\project')
+
+    def test_make_unique_filename_adds_suffix(self) -> None:
+        """Bulk export filenames should be deduplicated predictably."""
+        used_names = {'session.md', 'session (2).md'}
+        self.assertEqual(make_unique_filename('session', used_names), 'session (3).md')
 
 
 if __name__ == '__main__':

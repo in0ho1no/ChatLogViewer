@@ -16,6 +16,7 @@ from urllib.request import url2pathname
 
 APP_TITLE = 'VS Code Chat Log Viewer'
 DEFAULT_PREVIEW_LENGTH = 20
+SORTABLE_COLUMNS = ('message_count', 'updated_at', 'preview')
 IGNORED_RESPONSE_KINDS = {
     'mcpServersStarting',
     'progressTaskSerialized',
@@ -274,7 +275,11 @@ def parse_chat_session(session_path: Path, workspace_path: str, workspace_storag
 def build_markdown(session: ChatSession) -> str:
     """Build a Markdown document from a normalized session."""
     lines = [
-        f'# {session.display_title}',
+        '# Chat Session',
+        '',
+        session.display_title,
+        '',
+        '## Metadata',
         '',
         f'- Session ID: `{session.session_id}`',
         f'- Workspace: `{session.workspace_path}`',
@@ -290,20 +295,20 @@ def build_markdown(session: ChatSession) -> str:
     if session.parse_errors:
         lines.append(f'- Parse Warnings: {len(session.parse_errors)}')
 
-    lines.extend(['', '---', ''])
+    lines.extend(['', '# Conversation', ''])
 
     if not session.messages:
         lines.append('_No chat messages could be reconstructed from this session._')
     else:
-        for index, message in enumerate(session.messages, start=1):
+        for message in session.messages:
             role_label = 'User' if message.role == 'user' else 'Assistant'
-            lines.append(f'## {index}. {role_label}')
+            lines.append(f'## {role_label}')
             lines.append('')
             lines.append(message.text.rstrip())
             lines.append('')
 
     if session.parse_errors:
-        lines.extend(['---', '', '## Parse Warnings', ''])
+        lines.extend(['# Parse Warnings', ''])
         for warning in session.parse_errors:
             lines.append(f'- {warning}')
 
@@ -345,6 +350,8 @@ class ChatLogViewerApp:
 
         self.sessions: list[ChatSession] = []
         self.session_by_item_id: dict[str, ChatSession] = {}
+        self.sort_column = 'updated_at'
+        self.sort_desc = True
 
         self.status_var = tk.StringVar(value='Ready')
         self.source_path_var = tk.StringVar(value='')
@@ -360,12 +367,13 @@ class ChatLogViewerApp:
 
         toolbar = ttk.Frame(self.root, padding=(10, 10, 10, 6))
         toolbar.grid(row=0, column=0, sticky='ew')
-        toolbar.columnconfigure(3, weight=1)
+        toolbar.columnconfigure(4, weight=1)
 
         ttk.Label(toolbar, text=APP_TITLE, font=('Yu Gothic UI', 12, 'bold')).grid(row=0, column=0, sticky='w')
         ttk.Button(toolbar, text='再スキャン', command=self.refresh_sessions).grid(row=0, column=1, padx=(12, 0))
-        ttk.Button(toolbar, text='Markdown保存', command=self.export_selected_session).grid(row=0, column=2, padx=(8, 0))
-        ttk.Label(toolbar, textvariable=self.status_var, anchor='e').grid(row=0, column=3, sticky='e')
+        ttk.Button(toolbar, text='Markdown保存', command=self.export_selected_sessions).grid(row=0, column=2, padx=(8, 0))
+        ttk.Button(toolbar, text='Markdown一括保存', command=self.export_selected_sessions_to_directory).grid(row=0, column=3, padx=(8, 0))
+        ttk.Label(toolbar, textvariable=self.status_var, anchor='e').grid(row=0, column=4, sticky='e')
 
         paned = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
         paned.grid(row=1, column=0, sticky='nsew', padx=10, pady=(0, 10))
@@ -378,16 +386,17 @@ class ChatLogViewerApp:
             left,
             columns=('message_count', 'updated_at', 'preview'),
             show='headings',
-            selectmode='browse',
+            selectmode='extended',
         )
-        self.tree.heading('message_count', text='メッセージ数')
-        self.tree.heading('updated_at', text='最終更新日時')
-        self.tree.heading('preview', text='先頭メッセージ')
+        self.tree.heading('message_count', command=lambda: self.on_sort_column('message_count'))
+        self.tree.heading('updated_at', command=lambda: self.on_sort_column('updated_at'))
+        self.tree.heading('preview', command=lambda: self.on_sort_column('preview'))
         self.tree.column('message_count', width=110, anchor='center', stretch=False)
         self.tree.column('updated_at', width=120, anchor='center', stretch=False)
         self.tree.column('preview', width=320, anchor='w', stretch=True)
         self.tree.grid(row=0, column=0, sticky='nsew')
         self.tree.bind('<<TreeviewSelect>>', self.on_tree_select)
+        self._update_tree_headings()
 
         tree_scroll = ttk.Scrollbar(left, orient='vertical', command=self.tree.yview)
         tree_scroll.grid(row=0, column=1, sticky='ns')
@@ -453,19 +462,8 @@ class ChatLogViewerApp:
             return
 
         self.sessions = sessions
-        self.session_by_item_id.clear()
-        self.tree.delete(*self.tree.get_children())
-
-        for index, session in enumerate(sessions):
-            item_id = str(index)
-            preview = shorten_text(session.preview_text, DEFAULT_PREVIEW_LENGTH)
-            self.tree.insert(
-                '',
-                'end',
-                iid=item_id,
-                values=(session.message_count, session.updated_at_label, preview),
-            )
-            self.session_by_item_id[item_id] = session
+        self._sort_sessions()
+        self._populate_tree()
 
         if sessions:
             first_item_id = self.tree.get_children()[0]
@@ -479,12 +477,13 @@ class ChatLogViewerApp:
 
     def on_tree_select(self, _event: tk.Event[tk.Misc]) -> None:
         """Display the selected session."""
-        selection = self.tree.selection()
-        if not selection:
+        sessions = self.get_selected_sessions()
+        if not sessions:
             return
-        session = self.session_by_item_id.get(selection[0])
-        if session is not None:
-            self.show_session(session)
+        focus_item = self.tree.focus()
+        session = self.session_by_item_id.get(focus_item) or sessions[0]
+        self.show_session(session)
+        self.status_var.set(f'{len(sessions)} 件を選択中')
 
     def show_session(self, session: ChatSession) -> None:
         """Show a session in the right-hand Markdown panel."""
@@ -532,20 +531,38 @@ class ChatLogViewerApp:
         self.text.configure(state='disabled')
         self.text.yview_moveto(0.0)
 
-    def get_selected_session(self) -> ChatSession | None:
-        """Return the currently selected session."""
-        selection = self.tree.selection()
-        if not selection:
-            return None
-        return self.session_by_item_id.get(selection[0])
+    def get_selected_sessions(self) -> list[ChatSession]:
+        """Return the currently selected sessions in tree order."""
+        selected_ids = set(self.tree.selection())
+        sessions: list[ChatSession] = []
+        for item_id in self.tree.get_children():
+            if item_id in selected_ids:
+                session = self.session_by_item_id.get(item_id)
+                if session is not None:
+                    sessions.append(session)
+        return sessions
 
-    def export_selected_session(self) -> None:
-        """Export the selected session to a Markdown file."""
-        session = self.get_selected_session()
-        if session is None:
+    def export_selected_sessions(self) -> None:
+        """Export one selected session or many selected sessions."""
+        sessions = self.get_selected_sessions()
+        if not sessions:
             messagebox.showinfo(APP_TITLE, '先に履歴を選択してください。')
             return
+        if len(sessions) == 1:
+            self._export_single_session(sessions[0])
+            return
+        self._export_multiple_sessions(sessions)
 
+    def export_selected_sessions_to_directory(self) -> None:
+        """Export the selected sessions into a chosen directory."""
+        sessions = self.get_selected_sessions()
+        if not sessions:
+            messagebox.showinfo(APP_TITLE, '先に履歴を選択してください。')
+            return
+        self._export_multiple_sessions(sessions)
+
+    def _export_single_session(self, session: ChatSession) -> None:
+        """Export one session to a Markdown file."""
         default_name = sanitize_filename(session.display_title) or session.session_id
         default_path = session.folder_path / f'{default_name}.md'
         target = filedialog.asksaveasfilename(
@@ -562,12 +579,111 @@ class ChatLogViewerApp:
         output_path.write_text(build_markdown(session), encoding='utf-8')
         self.status_var.set(f'Markdown を保存しました: {output_path}')
 
+    def _export_multiple_sessions(self, sessions: list[ChatSession]) -> None:
+        """Export multiple sessions into a chosen directory."""
+        target_dir = filedialog.askdirectory(title='Markdown保存先フォルダ')
+        if not target_dir:
+            return
+
+        output_dir = Path(target_dir)
+        saved_paths: list[Path] = []
+        failures: list[str] = []
+        used_names: set[str] = set()
+
+        for session in sessions:
+            base_name = sanitize_filename(session.display_title) or session.session_id
+            filename = make_unique_filename(base_name, used_names)
+            output_path = output_dir / filename
+            try:
+                output_path.write_text(build_markdown(session), encoding='utf-8')
+            except OSError as exc:
+                failures.append(f'{session.display_title}: {exc}')
+                continue
+            used_names.add(filename.casefold())
+            saved_paths.append(output_path)
+
+        if failures:
+            messagebox.showerror(
+                APP_TITLE,
+                f'{len(saved_paths)} 件保存、{len(failures)} 件失敗しました。\n\n' + '\n'.join(failures[:10]),
+            )
+        else:
+            messagebox.showinfo(APP_TITLE, f'{len(saved_paths)} 件の Markdown を保存しました。')
+
+        if saved_paths:
+            self.status_var.set(f'{len(saved_paths)} 件の Markdown を保存しました: {output_dir}')
+
+    def on_sort_column(self, column_name: str) -> None:
+        """Sort the session list by the requested column."""
+        if column_name not in SORTABLE_COLUMNS:
+            return
+        if self.sort_column == column_name:
+            self.sort_desc = not self.sort_desc
+        else:
+            self.sort_column = column_name
+            self.sort_desc = column_name in {'message_count', 'updated_at'}
+        self._sort_sessions()
+        self._populate_tree(preserve_selection=True)
+        self._update_tree_headings()
+
+    def _sort_sessions(self) -> None:
+        """Sort the in-memory session list using the current sort state."""
+        def sort_key(session: ChatSession) -> tuple[Any, str]:
+            if self.sort_column == 'message_count':
+                return (session.message_count, str(session.session_path).casefold())
+            if self.sort_column == 'updated_at':
+                return (session.updated_at_ms or 0, str(session.session_path).casefold())
+            return (session.preview_text.casefold(), str(session.session_path).casefold())
+
+        self.sessions.sort(key=sort_key, reverse=self.sort_desc)
+
+    def _populate_tree(self, preserve_selection: bool = False) -> None:
+        """Populate the tree widget from the current session list."""
+        selected_ids = tuple(item_id for item_id in self.tree.selection() if item_id in self.session_by_item_id)
+        focused_id = self.tree.focus()
+
+        self.session_by_item_id.clear()
+        self.tree.delete(*self.tree.get_children())
+
+        for session in self.sessions:
+            item_id = str(session.session_path)
+            preview = shorten_text(session.preview_text, DEFAULT_PREVIEW_LENGTH)
+            self.tree.insert(
+                '',
+                'end',
+                iid=item_id,
+                values=(session.message_count, session.updated_at_label, preview),
+            )
+            self.session_by_item_id[item_id] = session
+
+        if preserve_selection:
+            restored_ids = [item_id for item_id in selected_ids if item_id in self.session_by_item_id]
+            if restored_ids:
+                self.tree.selection_set(restored_ids)
+                target_focus = focused_id if focused_id in self.session_by_item_id else restored_ids[0]
+                self.tree.focus(target_focus)
+                self.tree.see(target_focus)
+
+    def _update_tree_headings(self) -> None:
+        """Refresh heading labels to reflect the active sort column."""
+        labels = {
+            'message_count': 'メッセージ数',
+            'updated_at': '最終更新日時',
+            'preview': '先頭メッセージ',
+        }
+        for column_name, label in labels.items():
+            if self.sort_column == column_name:
+                arrow = '▼' if self.sort_desc else '▲'
+                label = f'{label} {arrow}'
+            self.tree.heading(column_name, text=label)
+
     def open_selected_folder(self) -> None:
         """Open the folder that contains the selected source file."""
-        session = self.get_selected_session()
-        if session is None:
+        sessions = self.get_selected_sessions()
+        if not sessions:
             messagebox.showinfo(APP_TITLE, '先に履歴を選択してください。')
             return
+        session = sessions[0]
         folder = session.folder_path
         if not folder.exists():
             messagebox.showerror(APP_TITLE, f'フォルダが見つかりません。\n\n{folder}')
@@ -592,6 +708,16 @@ def sanitize_filename(value: str) -> str:
     return sanitized[:120]
 
 
+def make_unique_filename(base_name: str, used_names: set[str]) -> str:
+    """Return a unique Markdown filename for bulk export."""
+    candidate = f'{base_name}.md'
+    suffix = 2
+    while candidate.casefold() in used_names:
+        candidate = f'{base_name} ({suffix}).md'
+        suffix += 1
+    return candidate
+
+
 def launch_app() -> None:
     """Launch the Tkinter desktop application."""
     root = tk.Tk()
@@ -610,6 +736,7 @@ __all__ = [
     'extract_text',
     'launch_app',
     'load_workspace_label',
+    'make_unique_filename',
     'parse_chat_session',
     'sanitize_filename',
     'shorten_text',
