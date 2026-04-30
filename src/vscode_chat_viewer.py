@@ -7,6 +7,7 @@ from datetime import datetime
 import json
 import os
 from pathlib import Path
+import re
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from typing import Any
@@ -242,6 +243,82 @@ def build_assistant_response_text(response_items: list[dict[str, Any]]) -> str:
     return '\n\n'.join(runs)
 
 
+def extract_tool_round_responses(result: Any) -> list[str]:
+    """Extract cleaner progress responses from request result metadata when present."""
+    if not isinstance(result, dict):
+        return []
+    metadata = result.get('metadata')
+    if not isinstance(metadata, dict):
+        return []
+    rounds = metadata.get('toolCallRounds')
+    if not isinstance(rounds, list):
+        return []
+
+    responses: list[str] = []
+    for round_item in rounds:
+        if not isinstance(round_item, dict):
+            continue
+        response = round_item.get('response')
+        if not isinstance(response, str):
+            continue
+        normalized = response.strip()
+        if not normalized:
+            continue
+        append_assistant_chunk(responses, normalized)
+    return responses
+
+
+def normalize_response_text_for_comparison(text: str) -> str:
+    """Normalize response text for loose duplicate detection."""
+    normalized = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'`\1`', text)
+    normalized = re.sub(r'\s+', ' ', normalized)
+    return normalized.strip()
+
+
+def extract_final_response_text(response_items: list[dict[str, Any]]) -> str:
+    """Extract the final assistant answer from visible response items."""
+    last_thinking_index = -1
+    for index, item in enumerate(response_items):
+        if item.get('kind') == 'thinking':
+            last_thinking_index = index
+
+    tail_items = response_items[last_thinking_index + 1 :] if last_thinking_index >= 0 else response_items
+    tail_text = build_assistant_response_text(tail_items)
+    if tail_text:
+        return tail_text
+    return build_assistant_response_text(response_items)
+
+
+def build_assistant_message_text(request: dict[str, Any]) -> str:
+    """Build one assistant message, preferring cleaner stored progress metadata when available."""
+    response_items = [item for item in request.get('response', []) if isinstance(item, dict)]
+    progress_responses = extract_tool_round_responses(request.get('result'))
+    final_response = extract_final_response_text(response_items)
+
+    chunks: list[str] = []
+    for chunk in progress_responses:
+        append_assistant_chunk(chunks, chunk)
+    if final_response and not is_effectively_duplicate_chunk(chunks, final_response):
+        append_assistant_chunk(chunks, final_response)
+    if chunks:
+        return '\n\n'.join(chunks)
+    return build_assistant_response_text(response_items)
+
+
+def is_effectively_duplicate_chunk(existing_chunks: list[str], candidate: str) -> bool:
+    """Return whether the candidate is already present in the existing chunks."""
+    normalized_candidate = normalize_response_text_for_comparison(candidate)
+    if not normalized_candidate:
+        return True
+    for chunk in reversed(existing_chunks):
+        normalized_chunk = normalize_response_text_for_comparison(chunk)
+        if normalized_chunk == normalized_candidate:
+            return True
+        if normalized_candidate in normalized_chunk:
+            return True
+    return False
+
+
 def parse_chat_session(session_path: Path, workspace_path: str, workspace_storage_dir: Path) -> ChatSession:
     """Parse one VS Code chat session JSONL file into a normalized model."""
     metadata: dict[str, Any] = {}
@@ -277,6 +354,10 @@ def parse_chat_session(session_path: Path, workspace_path: str, workspace_storag
                         title_text = extract_text(payload.get('v')).strip()
                         if title_text:
                             custom_title = title_text
+                    elif len(key_path) == 3 and key_path[0] == 'requests' and key_path[2] == 'result':
+                        request_index = key_path[1]
+                        if isinstance(request_index, int) and 0 <= request_index < len(requests):
+                            requests[request_index]['result'] = payload.get('v')
                     continue
 
                 if kind != 2:
@@ -322,9 +403,7 @@ def parse_chat_session(session_path: Path, workspace_path: str, workspace_storag
             if isinstance(model_candidate, str):
                 model_id = model_candidate
 
-        assistant_text = build_assistant_response_text(
-            [item for item in request.get('response', []) if isinstance(item, dict)],
-        )
+        assistant_text = build_assistant_message_text(request)
         if assistant_text:
             messages.append(ChatMessage(role='assistant', text=assistant_text, timestamp_ms=timestamp_ms))
 
@@ -822,6 +901,7 @@ __all__ = [
     'ChatMessage',
     'ChatSession',
     'build_markdown',
+    'build_assistant_message_text',
     'decode_file_uri',
     'discover_chat_sessions',
     'extract_text',

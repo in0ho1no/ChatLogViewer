@@ -11,6 +11,7 @@ import uuid
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from vscode_chat_viewer import (
+    build_assistant_message_text,
     build_assistant_response_text,
     build_markdown,
     decode_file_uri,
@@ -216,6 +217,48 @@ class HelperFunctionTests(unittest.TestCase):
         self.assertIn('`src/mtpj_deps.py` では XML の安全化が入っており、`SECURITY.md` でも注意が追加されています。', text)
         self.assertIn('`src/mtpj_deps.py` と `src/tests/test_mtpj_deps.py` に静的エラーもありませんでした。', text)
         self.assertEqual(text.count('に静的エラーもありませんでした。'), 1)
+
+    def test_build_assistant_message_text_prefers_clean_tool_round_responses(self) -> None:
+        """Cleaner tool round responses should be preferred over broken progress fragments."""
+        request = {
+            'result': {
+                'metadata': {
+                    'toolCallRounds': [
+                        {'response': 'まず変更ファイルを把握してから、`SECURITY.md` と実装の該当箇所を突き合わせます。'},
+                        {'response': 'テストで安全性の回帰がないかを確認します。`SECURITY.md` だけでなく、XML・出力サニタイズ・既存機能の回帰もまとめて見ます。'},
+                    ]
+                }
+            },
+            'response': [
+                {'value': 'まず変更ファイルを把握してから、'},
+                {'value': ' と実装の該当箇所を突き合わせます。'},
+                {'kind': 'thinking', 'value': 'internal'},
+                {'value': '重大な指摘はありませんでした。'},
+            ],
+        }
+        text = build_assistant_message_text(request)
+        self.assertIn('`SECURITY.md` と実装の該当箇所を突き合わせます。', text)
+        self.assertIn('重大な指摘はありませんでした。', text)
+
+    def test_build_assistant_message_text_avoids_duplicate_final_answer(self) -> None:
+        """A final answer already present in cleaner progress text should not be appended twice."""
+        request = {
+            'result': {
+                'metadata': {
+                    'toolCallRounds': [
+                        {
+                            'response': '重大な指摘はありませんでした。[src/mtpj_deps.py](src/mtpj_deps.py) と [SECURITY.md](SECURITY.md) を確認しました。'
+                        }
+                    ]
+                }
+            },
+            'response': [
+                {'kind': 'thinking', 'value': 'internal'},
+                {'value': '重大な指摘はありませんでした。`src/mtpj_deps.py` と `SECURITY.md` を確認しました。'},
+            ],
+        }
+        text = build_assistant_message_text(request)
+        self.assertEqual(text.count('重大な指摘はありませんでした。'), 1)
 
     def test_resolve_workspace_open_path_returns_existing_path(self) -> None:
         """Existing workspace paths should resolve for Explorer launch."""
