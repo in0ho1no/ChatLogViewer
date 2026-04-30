@@ -10,7 +10,16 @@ import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from vscode_chat_viewer import build_markdown, decode_file_uri, extract_windows_username, format_timestamp, make_unique_filename, parse_chat_session, resolve_workspace_open_path
+from vscode_chat_viewer import (
+    build_assistant_response_text,
+    build_markdown,
+    decode_file_uri,
+    extract_windows_username,
+    format_timestamp,
+    make_unique_filename,
+    parse_chat_session,
+    resolve_workspace_open_path,
+)
 
 
 TEST_TMP_ROOT = Path(__file__).resolve().parent / '_tmp'
@@ -187,6 +196,26 @@ class HelperFunctionTests(unittest.TestCase):
         """Bulk export filenames should be deduplicated predictably."""
         used_names = {'session.md', 'session (2).md'}
         self.assertEqual(make_unique_filename('session', used_names), 'session (3).md')
+
+    def test_build_assistant_response_text_merges_inline_references_and_overlaps(self) -> None:
+        """Visible fragments should keep inline references and absorb overlapping tails."""
+        text = build_assistant_response_text(
+            [
+                {'value': '重大な指摘はありませんでした。'},
+                {'kind': 'inlineReference', 'name': 'src/mtpj_deps.py'},
+                {'value': ' では XML の安全化が入っており、'},
+                {'kind': 'inlineReference', 'name': 'SECURITY.md'},
+                {'value': ' でも注意が追加されています。uv run pytest src/tests -q は 86 passed で、'},
+                {'kind': 'inlineReference', 'name': 'src/mtpj_deps.py'},
+                {'value': ' と '},
+                {'kind': 'inlineReference', 'name': 'src/tests/test_mtpj_deps.py'},
+                {'value': ' に静的エラーもありませんでした。\n\n'},
+                {'value': ' に静的エラーもありませんでした。\n\n残る注意点があります。'},
+            ],
+        )
+        self.assertIn('`src/mtpj_deps.py` では XML の安全化が入っており、`SECURITY.md` でも注意が追加されています。', text)
+        self.assertIn('`src/mtpj_deps.py` と `src/tests/test_mtpj_deps.py` に静的エラーもありませんでした。', text)
+        self.assertEqual(text.count('に静的エラーもありませんでした。'), 1)
 
     def test_resolve_workspace_open_path_returns_existing_path(self) -> None:
         """Existing workspace paths should resolve for Explorer launch."""

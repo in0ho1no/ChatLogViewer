@@ -180,10 +180,66 @@ def extract_visible_response_text(item: dict[str, Any]) -> str:
     kind = item.get('kind')
     if kind in IGNORED_RESPONSE_KINDS:
         return ''
+    if kind == 'inlineReference':
+        name = item.get('name')
+        if isinstance(name, str) and name:
+            return f'`{name}`'
+        return ''
     value = item.get('value')
     if isinstance(value, str):
         return value
     return ''
+
+
+def merge_response_fragments(existing: str, fragment: str) -> str:
+    """Merge one visible response fragment into an accumulated run."""
+    if not existing:
+        return fragment
+    if fragment.startswith(existing):
+        return fragment
+    if existing.endswith(fragment):
+        return existing
+
+    max_overlap = min(len(existing), len(fragment))
+    for overlap in range(max_overlap, 0, -1):
+        if existing.endswith(fragment[:overlap]):
+            return existing + fragment[overlap:]
+
+    if should_insert_paragraph_break(existing, fragment):
+        return existing + '\n\n' + fragment
+    return existing + fragment
+
+
+def should_insert_paragraph_break(existing: str, fragment: str) -> bool:
+    """Decide whether two non-overlapping fragments should form separate paragraphs."""
+    if not existing or not fragment:
+        return False
+    if fragment.startswith((' ', '\n', '\t', '`', '、', '。', ',', '.', ':', ';', ')', ']', '}')):
+        return False
+    if existing.endswith((' ', '\n', '\t', '`', '、', ',', ':', ';', '(', '[', '{')):
+        return False
+    return existing.endswith(('。', '！', '？', '!', '?'))
+
+
+def build_assistant_response_text(response_items: list[dict[str, Any]]) -> str:
+    """Reconstruct one assistant message from streamed response items."""
+    runs: list[str] = []
+    current_run = ''
+
+    for item in response_items:
+        if not isinstance(item, dict):
+            continue
+        fragment = extract_visible_response_text(item)
+        if fragment:
+            current_run = merge_response_fragments(current_run, fragment)
+            continue
+        if current_run.strip():
+            append_assistant_chunk(runs, current_run)
+        current_run = ''
+
+    if current_run.strip():
+        append_assistant_chunk(runs, current_run)
+    return '\n\n'.join(runs)
 
 
 def parse_chat_session(session_path: Path, workspace_path: str, workspace_storage_dir: Path) -> ChatSession:
@@ -266,14 +322,11 @@ def parse_chat_session(session_path: Path, workspace_path: str, workspace_storag
             if isinstance(model_candidate, str):
                 model_id = model_candidate
 
-        assistant_chunks: list[str] = []
-        for item in request.get('response', []):
-            if not isinstance(item, dict):
-                continue
-            visible_text = extract_visible_response_text(item)
-            if visible_text:
-                append_assistant_chunk(assistant_chunks, visible_text)
-        flush_assistant_chunks(messages, assistant_chunks, timestamp_ms)
+        assistant_text = build_assistant_response_text(
+            [item for item in request.get('response', []) if isinstance(item, dict)],
+        )
+        if assistant_text:
+            messages.append(ChatMessage(role='assistant', text=assistant_text, timestamp_ms=timestamp_ms))
 
     return ChatSession(
         session_id=str(metadata.get('sessionId') or session_path.stem),
