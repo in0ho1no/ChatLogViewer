@@ -1,3 +1,53 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## アプリケーション概要
+
+**ChatLogViewer** は、VS Code がローカルに保存したチャットセッションログ（JSONL形式）を読み込み、Tkinter UIで閲覧・Markdown形式でエクスポートする Windows 11 専用のデスクトップアプリ。
+
+- **データソース**: `%APPDATA%\Code\User\workspaceStorage\*\chatSessions\*.jsonl`
+- **技術スタック**: Python 3.12+、Tkinter（標準ライブラリのみ、外部依存なし）
+- **パッケージ管理**: `uv`
+
+## アーキテクチャ
+
+コアロジックとUIは `src/vscode_chat_viewer.py` 1ファイルに集約されている。`src/main.py` はエントリポイントのみ。
+
+### 主要な構成要素
+
+| 要素 | 説明 |
+|------|------|
+| `ChatMessage` | 1メッセージ（role, text, timestamp） |
+| `ChatSession` | セッション全体（メッセージリスト＋メタデータ） |
+| `discover_chat_sessions()` | VS Code ストレージを走査してセッションを収集 |
+| `parse_chat_session()` | JSONL ファイルをパース。ストリーミング断片を統合 |
+| `build_markdown()` | セッションを Markdown テキストに変換 |
+| `ChatLogViewerApp` | Tkinter メインクラス。左ペイン（一覧）＋右ペイン（詳細） |
+
+### データフロー
+
+1. `discover_chat_sessions()` → ワークスペースディレクトリを走査
+2. `parse_chat_session()` → JSONL を行単位で読み込み、アシスタント応答のストリーミング断片を結合
+3. `ChatLogViewerApp` → セッション選択時に右ペインへ表示
+4. エクスポート → `build_markdown()` で `.md` ファイルに保存
+
+## コマンド
+
+```bash
+# アプリ起動
+uv run python src/main.py
+
+# コード品質（変更後は必ず実行）
+uv run ruff check src/
+uv run ruff format src/
+uv run mypy src/
+
+# テスト
+uv run pytest                  # 全テスト
+uv run pytest src/tests/test_vscode_chat_viewer.py::関数名  # 単体テスト
+```
+
 ## 共通ルール
 
 - 大きな変更の前には、短い計画を提示して確認を取る
