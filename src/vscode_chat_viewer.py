@@ -138,6 +138,15 @@ def load_workspace_label(workspace_storage_dir: Path) -> str:
     return str(workspace_storage_dir)
 
 
+def extract_windows_username(path: Path) -> str | None:
+    """Extract the Windows username from a path under C:\\Users\\<name>."""
+    parts = path.parts
+    for index, part in enumerate(parts[:-1]):
+        if part.casefold() == 'users' and index + 1 < len(parts):
+            return parts[index + 1]
+    return None
+
+
 def resolve_workspace_open_path(workspace_path: str) -> Path | None:
     """Resolve a workspace label into a path that can be opened in Explorer."""
     if not workspace_path:
@@ -292,6 +301,7 @@ def build_markdown(session: ChatSession) -> str:
         '## Metadata',
         '',
         f'- Session ID: `{session.session_id}`',
+        f'- User: `{extract_windows_username(session.session_path) or "Unknown"}`',
         f'- Workspace: `{session.workspace_path}`',
         f'- Source File: `{session.session_path}`',
     ]
@@ -762,6 +772,7 @@ __all__ = [
     'decode_file_uri',
     'discover_chat_sessions',
     'extract_text',
+    'extract_windows_username',
     'launch_app',
     'load_workspace_label',
     'resolve_workspace_open_path',

@@ -10,7 +10,7 @@ import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from vscode_chat_viewer import build_markdown, decode_file_uri, format_timestamp, make_unique_filename, parse_chat_session, resolve_workspace_open_path
+from vscode_chat_viewer import build_markdown, decode_file_uri, extract_windows_username, format_timestamp, make_unique_filename, parse_chat_session, resolve_workspace_open_path
 
 
 TEST_TMP_ROOT = Path(__file__).resolve().parent / '_tmp'
@@ -121,6 +121,7 @@ class ParseChatSessionTests(unittest.TestCase):
         self.assertIn('# Conversation', markdown)
         self.assertIn('## User', markdown)
         self.assertIn('## Assistant', markdown)
+        self.assertIn('- User: `Unknown`', markdown)
         self.assertIn(format_timestamp(1710000001000, '%Y/%m/%d %H:%M'), markdown)
         self.assertNotIn('## 1. User', markdown)
 
@@ -176,6 +177,11 @@ class HelperFunctionTests(unittest.TestCase):
         """A VS Code file URI should decode into a Windows path."""
         decoded = decode_file_uri('file:///d%3A/work/project')
         self.assertEqual(decoded, 'D:\\work\\project')
+
+    def test_extract_windows_username_from_user_profile_path(self) -> None:
+        """Windows profile paths should expose the username."""
+        username = extract_windows_username(Path(r'C:\Users\seigy\AppData\Roaming\Code\User\workspaceStorage\a\chatSessions\b.jsonl'))
+        self.assertEqual(username, 'seigy')
 
     def test_make_unique_filename_adds_suffix(self) -> None:
         """Bulk export filenames should be deduplicated predictably."""
