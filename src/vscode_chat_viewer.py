@@ -24,6 +24,11 @@ IGNORED_RESPONSE_KINDS = {
     'toolInvocationSerialized',
 }
 
+# Copilot Chat logs can produce deeply nested message structures during history
+# restoration. 128 levels gives generous room above any real-world nesting
+# while still guarding against pathological inputs.
+_EXTRACT_TEXT_MAX_DEPTH = 128
+
 
 @dataclass(slots=True)
 class ChatMessage:
@@ -83,8 +88,10 @@ def format_timestamp(timestamp_ms: int, pattern: str) -> str:
     return datetime.fromtimestamp(timestamp_ms / 1000).strftime(pattern)
 
 
-def extract_text(value: Any) -> str:
+def extract_text(value: Any, _depth: int = 0) -> str:
     """Extract a plain text string from mixed JSON structures."""
+    if _depth > _EXTRACT_TEXT_MAX_DEPTH:
+        return ''
     if value is None:
         return ''
     if isinstance(value, str):
@@ -95,13 +102,13 @@ def extract_text(value: Any) -> str:
             return text_val
         parts = value.get('parts')
         if isinstance(parts, list):
-            fragments = [extract_text(part) for part in parts]
+            fragments = [extract_text(part, _depth + 1) for part in parts]
             return ''.join(fragment for fragment in fragments if fragment)
         value_val = value.get('value')
         if isinstance(value_val, str):
             return value_val
     if isinstance(value, list):
-        return ''.join(fragment for fragment in (extract_text(item) for item in value) if fragment)
+        return ''.join(fragment for fragment in (extract_text(item, _depth + 1) for item in value) if fragment)
     return ''
 
 
@@ -132,6 +139,9 @@ def load_workspace_label(workspace_storage_dir: Path) -> str:
     except (OSError, json.JSONDecodeError):
         return str(workspace_storage_dir)
 
+    if not isinstance(payload, dict):
+        return str(workspace_storage_dir)
+
     for key in ('folder', 'workspace', 'configuration'):
         value = payload.get(key)
         if isinstance(value, str):
@@ -149,12 +159,23 @@ def extract_windows_username(path: Path) -> str | None:
     return None
 
 
+# Only these file extensions are safe to open with os.startfile().
+# Directories are always allowed; .code-workspace opens VS Code itself.
+_SAFE_OPEN_SUFFIXES = frozenset({'.code-workspace'})
+
+
 def resolve_workspace_open_path(workspace_path: str) -> Path | None:
-    """Resolve a workspace label into a path that can be opened in Explorer."""
+    """Resolve a workspace label into a path that can be opened in Explorer.
+
+    Returns a directory or a .code-workspace file; rejects any other file type
+    to prevent os.startfile() from inadvertently executing arbitrary files.
+    """
     if not workspace_path:
         return None
     candidate = Path(workspace_path)
-    if candidate.exists():
+    if candidate.is_dir():
+        return candidate
+    if candidate.is_file() and candidate.suffix.lower() in _SAFE_OPEN_SUFFIXES:
         return candidate
     return None
 
@@ -843,7 +864,7 @@ class ChatLogViewerApp:
             return
         session = sessions[0]
         folder = session.folder_path
-        if not folder.exists():
+        if not folder.is_dir():
             messagebox.showerror(APP_TITLE, f'フォルダが見つかりません。\n\n{folder}')
             return
 
@@ -872,11 +893,21 @@ def shorten_text(text: str, limit: int) -> str:
     return compact[:limit] + '...'
 
 
+# Windows reserved device names that cannot be used as filenames.
+_WINDOWS_RESERVED_NAMES = re.compile(r'^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$)', re.IGNORECASE)
+
+
 def sanitize_filename(value: str) -> str:
     """Sanitize a string for use as a Windows filename."""
+    # Strip control characters (U+0000–U+001F).
+    sanitized = ''.join(char for char in value if ord(char) >= 0x20)
+    # Replace characters invalid on Windows.
     invalid_chars = '<>:"/\\|?*'
-    sanitized = ''.join('_' if char in invalid_chars else char for char in value).strip()
+    sanitized = ''.join('_' if char in invalid_chars else char for char in sanitized).strip()
     sanitized = sanitized.rstrip('. ')
+    # Prefix Windows reserved device names to prevent write failures.
+    if _WINDOWS_RESERVED_NAMES.match(sanitized):
+        sanitized = '_' + sanitized
     return sanitized[:120]
 
 
