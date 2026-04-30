@@ -2,18 +2,17 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime
 import json
 import os
-from pathlib import Path
 import re
 import tkinter as tk
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Any
 from urllib.parse import unquote, urlparse
 from urllib.request import url2pathname
-
 
 APP_TITLE = 'VS Code Chat Log Viewer'
 DEFAULT_PREVIEW_LENGTH = 20
@@ -24,6 +23,11 @@ IGNORED_RESPONSE_KINDS = {
     'thinking',
     'toolInvocationSerialized',
 }
+
+# Copilot Chat logs can produce deeply nested message structures during history
+# restoration. 128 levels gives generous room above any real-world nesting
+# while still guarding against pathological inputs.
+_EXTRACT_TEXT_MAX_DEPTH = 128
 
 
 @dataclass(slots=True)
@@ -84,23 +88,27 @@ def format_timestamp(timestamp_ms: int, pattern: str) -> str:
     return datetime.fromtimestamp(timestamp_ms / 1000).strftime(pattern)
 
 
-def extract_text(value: Any) -> str:
+def extract_text(value: Any, _depth: int = 0) -> str:
     """Extract a plain text string from mixed JSON structures."""
+    if _depth > _EXTRACT_TEXT_MAX_DEPTH:
+        return ''
     if value is None:
         return ''
     if isinstance(value, str):
         return value
     if isinstance(value, dict):
-        if isinstance(value.get('text'), str):
-            return value['text']
+        text_val = value.get('text')
+        if isinstance(text_val, str):
+            return text_val
         parts = value.get('parts')
         if isinstance(parts, list):
-            fragments = [extract_text(part) for part in parts]
+            fragments = [extract_text(part, _depth + 1) for part in parts]
             return ''.join(fragment for fragment in fragments if fragment)
-        if isinstance(value.get('value'), str):
-            return value['value']
+        value_val = value.get('value')
+        if isinstance(value_val, str):
+            return value_val
     if isinstance(value, list):
-        return ''.join(fragment for fragment in (extract_text(item) for item in value) if fragment)
+        return ''.join(fragment for fragment in (extract_text(item, _depth + 1) for item in value) if fragment)
     return ''
 
 
@@ -131,6 +139,9 @@ def load_workspace_label(workspace_storage_dir: Path) -> str:
     except (OSError, json.JSONDecodeError):
         return str(workspace_storage_dir)
 
+    if not isinstance(payload, dict):
+        return str(workspace_storage_dir)
+
     for key in ('folder', 'workspace', 'configuration'):
         value = payload.get(key)
         if isinstance(value, str):
@@ -140,7 +151,7 @@ def load_workspace_label(workspace_storage_dir: Path) -> str:
 
 
 def extract_windows_username(path: Path) -> str | None:
-    """Extract the Windows username from a path under C:\\Users\\<name>."""
+    r"""Extract the Windows username from a path under C:\Users\<name>."""
     parts = path.parts
     for index, part in enumerate(parts[:-1]):
         if part.casefold() == 'users' and index + 1 < len(parts):
@@ -148,12 +159,23 @@ def extract_windows_username(path: Path) -> str | None:
     return None
 
 
+# Only these file extensions are safe to open with os.startfile().
+# Directories are always allowed; .code-workspace opens VS Code itself.
+_SAFE_OPEN_SUFFIXES = frozenset({'.code-workspace'})
+
+
 def resolve_workspace_open_path(workspace_path: str) -> Path | None:
-    """Resolve a workspace label into a path that can be opened in Explorer."""
+    """Resolve a workspace label into a path that can be opened in Explorer.
+
+    Returns a directory or a .code-workspace file; rejects any other file type
+    to prevent os.startfile() from inadvertently executing arbitrary files.
+    """
     if not workspace_path:
         return None
     candidate = Path(workspace_path)
-    if candidate.exists():
+    if candidate.is_dir():
+        return candidate
+    if candidate.is_file() and candidate.suffix.lower() in _SAFE_OPEN_SUFFIXES:
         return candidate
     return None
 
@@ -784,12 +806,13 @@ class ChatLogViewerApp:
 
     def _sort_sessions(self) -> None:
         """Sort the in-memory session list using the current sort state."""
+
         def sort_key(session: ChatSession) -> tuple[Any, str]:
             if self.sort_column == 'message_count':
                 return (session.message_count, str(session.session_path).casefold())
             if self.sort_column == 'updated_at':
                 return (session.updated_at_ms or 0, str(session.session_path).casefold())
-            return (session.preview_text.casefold(), str(session.session_path).casefold())
+            return (session.display_title.casefold(), str(session.session_path).casefold())
 
         self.sessions.sort(key=sort_key, reverse=self.sort_desc)
 
@@ -803,7 +826,7 @@ class ChatLogViewerApp:
 
         for session in self.sessions:
             item_id = str(session.session_path)
-            preview = shorten_text(session.preview_text, DEFAULT_PREVIEW_LENGTH)
+            preview = shorten_text(session.display_title, DEFAULT_PREVIEW_LENGTH)
             self.tree.insert(
                 '',
                 'end',
@@ -825,7 +848,7 @@ class ChatLogViewerApp:
         labels = {
             'message_count': 'メッセージ数',
             'updated_at': '最終更新日時',
-            'preview': '先頭メッセージ',
+            'preview': 'タイトル / 先頭メッセージ',
         }
         for column_name, label in labels.items():
             if self.sort_column == column_name:
@@ -841,7 +864,7 @@ class ChatLogViewerApp:
             return
         session = sessions[0]
         folder = session.folder_path
-        if not folder.exists():
+        if not folder.is_dir():
             messagebox.showerror(APP_TITLE, f'フォルダが見つかりません。\n\n{folder}')
             return
 
@@ -870,11 +893,21 @@ def shorten_text(text: str, limit: int) -> str:
     return compact[:limit] + '...'
 
 
+# Windows reserved device names that cannot be used as filenames.
+_WINDOWS_RESERVED_NAMES = re.compile(r'^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\.|$)', re.IGNORECASE)
+
+
 def sanitize_filename(value: str) -> str:
     """Sanitize a string for use as a Windows filename."""
+    # Strip control characters (U+0000–U+001F).
+    sanitized = ''.join(char for char in value if ord(char) >= 0x20)
+    # Replace characters invalid on Windows.
     invalid_chars = '<>:"/\\|?*'
-    sanitized = ''.join('_' if char in invalid_chars else char for char in value).strip()
+    sanitized = ''.join('_' if char in invalid_chars else char for char in sanitized).strip()
     sanitized = sanitized.rstrip('. ')
+    # Prefix Windows reserved device names to prevent write failures.
+    if _WINDOWS_RESERVED_NAMES.match(sanitized):
+        sanitized = '_' + sanitized
     return sanitized[:120]
 
 
@@ -900,17 +933,17 @@ __all__ = [
     'ChatLogViewerApp',
     'ChatMessage',
     'ChatSession',
-    'build_markdown',
     'build_assistant_message_text',
+    'build_markdown',
     'decode_file_uri',
     'discover_chat_sessions',
     'extract_text',
     'extract_windows_username',
     'launch_app',
     'load_workspace_label',
-    'resolve_workspace_open_path',
     'make_unique_filename',
     'parse_chat_session',
+    'resolve_workspace_open_path',
     'sanitize_filename',
     'shorten_text',
 ]
